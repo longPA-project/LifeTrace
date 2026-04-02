@@ -1,8 +1,8 @@
 package com.example.sensorcollector
 
 import android.Manifest
-import android.content.Intent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -17,15 +17,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
-import androidx.core.app.ActivityCompat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.sensorcollector.databinding.ActivityMainBinding
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -35,7 +34,6 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener {
 
     companion object {
-        private const val AMAP_API_KEY = "cc0f3eccf7e698a5bce8f107e00fb08e"
         private const val AMAP_BASE_URL = "https://restapi.amap.com/v3/geocode/regeo"
         private const val PREFS_NAME = "sensorcollector_prefs"
         private const val KEY_LOCATION_PERMISSION_REQUESTED = "location_permission_requested"
@@ -43,16 +41,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var sensorManager: SensorManager
-    private lateinit var locationManager: LocationManager
     private lateinit var geocoder: Geocoder
+    private lateinit var locationManager: LocationManager
     private var lastResolvedLocationKey: String? = null
     private var placeLookupToken = 0L
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             val fineGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
-            val coarseGranted = result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-            if (fineGranted || coarseGranted) {
+            if (fineGranted) {
                 binding.refreshButton.setText(R.string.request_permission)
                 startLocationUpdates()
             } else {
@@ -115,16 +112,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun requestLocationPermissionIfNeeded() {
-        val fineGranted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (fineGranted || coarseGranted) {
+        if (hasPreciseLocationPermission()) {
             binding.locationPermissionStatus.text = getString(R.string.location_permission_granted)
             binding.refreshButton.setText(R.string.request_permission)
             startLocationUpdates()
@@ -146,8 +134,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun handleLocationButtonClick() {
-        if (hasLocationPermission()) {
-            if (!isAnyLocationProviderEnabled()) {
+        if (hasPreciseLocationPermission()) {
+            if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 openLocationSettings()
                 return
             }
@@ -155,7 +143,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             return
         }
 
-        if (isPermissionPermanentlyDenied()) {
+        if (hasApproximateOnlyPermission() || isPrecisePermissionPermanentlyDenied()) {
             openAppSettings()
             return
         }
@@ -165,8 +153,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
     private fun syncLocationUi() {
         setupSensorAvailability()
-        if (hasLocationPermission()) {
-            if (!isAnyLocationProviderEnabled()) {
+        if (hasPreciseLocationPermission()) {
+            if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 binding.locationPermissionStatus.text =
                     getString(R.string.location_services_disabled)
                 binding.refreshButton.setText(R.string.open_location_settings)
@@ -178,9 +166,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             return
         }
 
-        if (isPermissionPermanentlyDenied()) {
+        if (hasApproximateOnlyPermission()) {
             binding.locationPermissionStatus.text =
-                getString(R.string.location_permission_open_settings)
+                getString(R.string.location_permission_need_precise)
+            binding.refreshButton.setText(R.string.open_app_settings)
+            return
+        }
+
+        if (isPrecisePermissionPermanentlyDenied()) {
+            binding.locationPermissionStatus.text =
+                getString(R.string.location_permission_open_precise_settings)
             binding.refreshButton.setText(R.string.open_app_settings)
             return
         }
@@ -190,9 +185,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun updatePermissionUiAfterDenial() {
-        if (isPermissionPermanentlyDenied()) {
+        if (hasApproximateOnlyPermission()) {
             binding.locationPermissionStatus.text =
-                getString(R.string.location_permission_open_settings)
+                getString(R.string.location_permission_need_precise)
+            binding.refreshButton.setText(R.string.open_app_settings)
+        } else if (isPrecisePermissionPermanentlyDenied()) {
+            binding.locationPermissionStatus.text =
+                getString(R.string.location_permission_open_precise_settings)
             binding.refreshButton.setText(R.string.open_app_settings)
         } else {
             binding.locationPermissionStatus.text = getString(R.string.location_permission_denied)
@@ -200,23 +199,26 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         }
     }
 
-    private fun hasLocationPermission(): Boolean {
-        val fineGranted = ContextCompat.checkSelfPermission(
+    private fun hasPreciseLocationPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasApproximateOnlyPermission(): Boolean {
         val coarseGranted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        return fineGranted || coarseGranted
+        return coarseGranted && !hasPreciseLocationPermission()
     }
 
-    private fun isPermissionPermanentlyDenied(): Boolean {
+    private fun isPrecisePermissionPermanentlyDenied(): Boolean {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val requestedBefore = prefs.getBoolean(KEY_LOCATION_PERMISSION_REQUESTED, false)
-        if (!requestedBefore || hasLocationPermission()) {
+        if (!requestedBefore || hasPreciseLocationPermission()) {
             return false
         }
 
@@ -224,12 +226,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
         )
-        val coarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-            this,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-
-        return !fineRationale && !coarseRationale
+        return !fineRationale
     }
 
     private fun openAppSettings() {
@@ -247,75 +244,28 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         startActivity(intent)
     }
 
-    private fun isAnyLocationProviderEnabled(): Boolean {
-        return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
-            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ||
-            locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) ||
-            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER))
-    }
-
     private fun startLocationUpdates() {
-        if (!hasLocationPermission()) {
+        if (!hasPreciseLocationPermission()) {
             return
         }
 
-        if (!isAnyLocationProviderEnabled()) {
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
             binding.locationPermissionStatus.text = getString(R.string.location_services_disabled)
-            binding.refreshButton.setText(R.string.open_location_settings)
-            return
-        }
-
-        val fineGranted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val providers = buildList {
-            if (fineGranted && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                add(LocationManager.GPS_PROVIDER)
-            }
-            if (coarseGranted && locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                add(LocationManager.NETWORK_PROVIDER)
-            }
-            if (coarseGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)
-            ) {
-                add(LocationManager.FUSED_PROVIDER)
-            }
-            if (coarseGranted && locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
-                add(LocationManager.PASSIVE_PROVIDER)
-            }
-        }.distinct()
-
-        if (providers.isEmpty()) {
-            binding.locationPermissionStatus.text = getString(R.string.location_provider_disabled)
             binding.refreshButton.setText(R.string.open_location_settings)
             return
         }
 
         binding.refreshButton.setText(R.string.request_permission)
         binding.locationPermissionStatus.text = getString(R.string.location_waiting_for_fix)
-
         locationManager.removeUpdates(this)
-        providers.forEach { provider ->
-            locationManager.requestLocationUpdates(
-                provider,
-                1000L,
-                0f,
-                this,
-                Looper.getMainLooper()
-            )
-        }
-
-        providers
-            .mapNotNull { provider -> locationManager.getLastKnownLocation(provider) }
-            .maxByOrNull { it.time }
-            ?.let(::renderLocation)
+        locationManager.requestLocationUpdates(
+            LocationManager.GPS_PROVIDER,
+            1000L,
+            0f,
+            this,
+            Looper.getMainLooper()
+        )
+        locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)?.let(::renderLocation)
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -335,6 +285,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
     override fun onLocationChanged(location: Location) {
+        if (location.provider != LocationManager.GPS_PROVIDER) {
+            return
+        }
         renderLocation(location)
     }
 
@@ -403,7 +356,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             )
             val extensions = URLEncoder.encode("all", Charsets.UTF_8.name())
             val url = URL(
-                "$AMAP_BASE_URL?key=$AMAP_API_KEY&location=$locationParam&extensions=$extensions&radius=100"
+                "$AMAP_BASE_URL?key=${BuildConfig.AMAP_API_KEY}&location=$locationParam&extensions=$extensions&radius=20"
             )
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -432,35 +385,63 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         val pois = regeocode.optJSONArray("pois")
 
         val parts = linkedSetOf<String>()
-
-        aois?.optJSONObject(0)?.optString("name")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(parts::add)
-        pois?.optJSONObject(0)?.optString("name")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(parts::add)
-        addressComponent?.optString("building")
+        val building = addressComponent?.optString("building")
             ?.takeIf { it.isNotBlank() && it != "[]" }
-            ?.let(parts::add)
-        addressComponent?.optString("streetNumber")
+        val streetNumber = addressComponent?.optString("streetNumber")
             ?.takeIf { it.isNotBlank() && it != "[]" }
             ?.let { raw ->
                 val streetJson = runCatching { JSONObject(raw) }.getOrNull()
                 val street = streetJson?.optString("street")?.takeIf { it.isNotBlank() }
                 val number = streetJson?.optString("number")?.takeIf { it.isNotBlank() }
-                listOfNotNull(street, number)
-                    .joinToString("")
-                    .takeIf { it.isNotBlank() }
-                    ?.let(parts::add)
+                listOfNotNull(street, number).joinToString("").takeIf { it.isNotBlank() }
             }
+        val primaryPoi = pois?.optJSONObject(0)?.optString("name")
+            ?.takeIf { it.isNotBlank() }
+        val primaryAoi = aois?.optJSONObject(0)?.optString("name")
+            ?.takeIf { it.isNotBlank() }
+        val campusName = listOfNotNull(primaryPoi, primaryAoi).firstOrNull(::looksLikeCampusLevelName)
+        val buildingName = listOfNotNull(primaryPoi, building, primaryAoi).firstOrNull(::looksLikeBuildingLevelName)
+        val campusWithBuilding = combineCampusAndBuilding(campusName, buildingName)
+
+        campusWithBuilding?.let(parts::add)
+        buildingName?.let(parts::add)
+        streetNumber?.let(parts::add)
         addressComponent?.optString("township")
             ?.takeIf { it.isNotBlank() }
             ?.let(parts::add)
+        campusName?.let(parts::add)
+        primaryPoi
+            ?.takeUnless { it == campusName || it == buildingName || looksLikeCampusLevelName(it) }
+            ?.let(parts::add)
+        primaryAoi
+            ?.takeUnless { it == campusName || it == buildingName || looksLikeCampusLevelName(it) }
+            ?.let(parts::add)
         regeocode.optString("formatted_address")
-            ?.takeIf { it.isNotBlank() }
+            .takeIf { it.isNotBlank() }
             ?.let(parts::add)
 
-        return parts.firstOrNull() ?: regeocode.optString("formatted_address").takeIf { it.isNotBlank() }
+        return parts.firstOrNull()
+            ?: regeocode.optString("formatted_address").takeIf { it.isNotBlank() }
+    }
+
+    private fun looksLikeBuildingLevelName(name: String): Boolean {
+        val keywords = listOf("楼", "馆", "中心", "实验室", "教室", "教学", "大厦", "广场", "公寓")
+        return keywords.any(name::contains)
+    }
+
+    private fun looksLikeCampusLevelName(name: String): Boolean {
+        val keywords = listOf("大学", "学院", "校区", "学校", "园区")
+        return keywords.any(name::contains)
+    }
+
+    private fun combineCampusAndBuilding(campusName: String?, buildingName: String?): String? {
+        if (campusName.isNullOrBlank() || buildingName.isNullOrBlank()) {
+            return null
+        }
+        if (buildingName.contains(campusName)) {
+            return buildingName
+        }
+        return "$campusName, $buildingName"
     }
 
     private fun resolvePlaceNameWithGeocoder(location: Location): String {

@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val amapApiKey = (project.findProperty("amap.api.key") as String?) ?: ""
+
 android {
     namespace = "com.example.sensorcollector"
     compileSdk = 34
@@ -15,6 +17,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "AMAP_API_KEY", "\"$amapApiKey\"")
+        manifestPlaceholders["AMAP_API_KEY"] = amapApiKey
     }
 
     buildTypes {
@@ -37,6 +41,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         viewBinding = true
     }
 }

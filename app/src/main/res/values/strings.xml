@@ -9,11 +9,14 @@
     <string name="location_permission_requesting">Requesting location permission...</string>
     <string name="location_permission_granted">Location permission granted.</string>
     <string name="location_permission_denied">Location permission denied.</string>
-    <string name="location_permission_open_settings">Location permission was denied with "Don\'t ask again". Open app settings and enable Location.</string>
+    <string name="location_permission_need_precise">Only approximate location is enabled. Open app settings and allow precise location for GPS accuracy.</string>
+    <string name="location_permission_open_precise_settings">Precise location permission was denied with "Don\'t ask again". Open app settings and enable precise location.</string>
     <string name="location_provider_disabled">No location provider is enabled.</string>
     <string name="location_services_disabled">Location services are turned off on this phone. Open system location settings and enable them.</string>
     <string name="location_listening">Listening for location updates.</string>
     <string name="location_waiting_for_fix">Waiting for a location fix. Go outdoors or enable high-accuracy location if values stay N/A.</string>
+    <string name="location_fix_failed">Location fix failed.</string>
+    <string name="location_fix_failed_with_reason">Location fix failed (%1$d): %2$s</string>
     <string name="location_title">GPS Data</string>
     <string name="imu_title">IMU Data</string>
     <string name="place_name_label">Place Name</string>
