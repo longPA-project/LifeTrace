@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.SensorCollector" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#0A6847</item>
+        <item name="colorPrimaryContainer">#9CF3C8</item>
+        <item name="colorSecondary">#4C6358</item>
+        <item name="android:statusBarColor" tools:targetApi="l">#0A6847</item>
+    </style>
+</resources>
