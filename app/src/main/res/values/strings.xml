@@ -19,6 +19,14 @@
     <string name="location_fix_failed_with_reason">Location fix failed (%1$d): %2$s</string>
     <string name="location_title">GPS Data</string>
     <string name="imu_title">IMU Data</string>
+    <string name="current_state_title">Current State</string>
+    <string name="current_state_waiting">Waiting for GPS and IMU updates.</string>
+    <string name="current_state_detail">Speed %1$s m/s, motion energy %2$s m/s²</string>
+    <string name="activity_state_unknown">Unknown</string>
+    <string name="activity_state_stationary">Stationary</string>
+    <string name="activity_state_walking">Walking</string>
+    <string name="activity_state_running">Running</string>
+    <string name="activity_state_in_vehicle">In Vehicle</string>
     <string name="place_name_label">Place Name</string>
     <string name="place_name_loading">Resolving place name...</string>
     <string name="place_name_unavailable">Place name unavailable</string>

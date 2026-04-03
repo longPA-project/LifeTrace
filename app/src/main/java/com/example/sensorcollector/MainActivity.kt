@@ -30,6 +30,8 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 import kotlin.concurrent.thread
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener {
 
@@ -45,6 +47,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private lateinit var locationManager: LocationManager
     private var lastResolvedLocationKey: String? = null
     private var placeLookupToken = 0L
+    private var latestSpeedMps: Float? = null
+    private var latestMotionEnergy = 0.0
+    private var lastAccelerationMagnitude = SensorManager.GRAVITY_EARTH.toDouble()
+
+    private enum class ActivityState {
+        UNKNOWN,
+        STATIONARY,
+        WALKING,
+        RUNNING,
+        IN_VEHICLE
+    }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -67,6 +80,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         geocoder = Geocoder(this, Locale.getDefault())
 
         setupSensorAvailability()
+        updateCurrentStateUi(ActivityState.UNKNOWN, null, null)
         binding.refreshButton.setOnClickListener {
             handleLocationButtonClick()
         }
@@ -272,6 +286,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
                 binding.accelerometerValue.text = formatVector(event.values)
+                latestMotionEnergy = updateMotionEnergy(event.values)
+                updateCurrentStateUi(classifyActivityState(), latestSpeedMps, latestMotionEnergy)
             }
             Sensor.TYPE_GYROSCOPE -> {
                 binding.gyroscopeValue.text = formatVector(event.values)
@@ -293,6 +309,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
     private fun renderLocation(location: Location) {
         binding.locationPermissionStatus.text = getString(R.string.location_listening)
+        latestSpeedMps = location.speed.takeIf { location.hasSpeed() }
         binding.latitudeValue.text = formatDouble(location.latitude, 6)
         binding.longitudeValue.text = formatDouble(location.longitude, 6)
         binding.altitudeValue.text = if (location.hasAltitude()) {
@@ -316,6 +333,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             getString(R.string.value_unavailable)
         }
         binding.providerValue.text = location.provider ?: getString(R.string.value_unavailable)
+        updateCurrentStateUi(classifyActivityState(), latestSpeedMps, latestMotionEnergy)
         resolvePlaceName(location)
     }
 
@@ -329,11 +347,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         val lookupToken = ++placeLookupToken
         binding.placeNameValue.text = getString(R.string.place_name_loading)
         thread {
-            val amapName = fetchAmapPlaceName(location)
-            if (amapName != null) {
+            val amapResult = fetchAmapPlaceName(location)
+            if (amapResult != null) {
                 runOnUiThread {
                     if (lookupToken == placeLookupToken) {
-                        binding.placeNameValue.text = amapName
+                        binding.placeNameValue.text = amapResult.displayName
+                            ?: getString(R.string.place_name_unavailable)
                     }
                 }
                 return@thread
@@ -348,7 +367,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         }
     }
 
-    private fun fetchAmapPlaceName(location: Location): String? {
+    private data class AmapPlaceResult(
+        val displayName: String?
+    )
+
+    private fun fetchAmapPlaceName(location: Location): AmapPlaceResult? {
         return try {
             val locationParam = URLEncoder.encode(
                 "${location.longitude},${location.latitude}",
@@ -366,14 +389,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
             connection.inputStream.bufferedReader().use(BufferedReader::readText)
                 .let(::parseAmapPlaceName)
-        } catch (_: IOException) {
+        } catch (e: IOException) {
             null
-        } catch (_: IllegalArgumentException) {
+        } catch (e: IllegalArgumentException) {
             null
         }
     }
 
-    private fun parseAmapPlaceName(response: String): String? {
+    private fun parseAmapPlaceName(response: String): AmapPlaceResult? {
         val json = JSONObject(response)
         if (json.optString("status") != "1") {
             return null
@@ -420,8 +443,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             .takeIf { it.isNotBlank() }
             ?.let(parts::add)
 
-        return parts.firstOrNull()
-            ?: regeocode.optString("formatted_address").takeIf { it.isNotBlank() }
+        return AmapPlaceResult(
+            parts.firstOrNull()
+                ?: regeocode.optString("formatted_address").takeIf { it.isNotBlank() }
+        )
     }
 
     private fun looksLikeBuildingLevelName(name: String): Boolean {
@@ -501,6 +526,54 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             formatDouble(values.getOrNull(1)?.toDouble() ?: 0.0, 3),
             formatDouble(values.getOrNull(2)?.toDouble() ?: 0.0, 3)
         )
+    }
+
+    private fun updateMotionEnergy(values: FloatArray): Double {
+        val x = values.getOrNull(0)?.toDouble() ?: 0.0
+        val y = values.getOrNull(1)?.toDouble() ?: 0.0
+        val z = values.getOrNull(2)?.toDouble() ?: 0.0
+        val magnitude = sqrt(x * x + y * y + z * z)
+        val delta = abs(magnitude - lastAccelerationMagnitude)
+        lastAccelerationMagnitude = magnitude
+        latestMotionEnergy = latestMotionEnergy * 0.8 + delta * 0.2
+        return latestMotionEnergy
+    }
+
+    private fun classifyActivityState(): ActivityState {
+        val speed = latestSpeedMps ?: return ActivityState.UNKNOWN
+        val motionEnergy = latestMotionEnergy
+
+        return when {
+            speed >= 6.0f -> ActivityState.IN_VEHICLE
+            speed >= 2.4f -> ActivityState.RUNNING
+            speed >= 0.8f -> ActivityState.WALKING
+            motionEnergy >= 1.2 -> ActivityState.WALKING
+            else -> ActivityState.STATIONARY
+        }
+    }
+
+    private fun updateCurrentStateUi(
+        state: ActivityState,
+        speedMps: Float?,
+        motionEnergy: Double?
+    ) {
+        binding.currentStateValue.text = when (state) {
+            ActivityState.UNKNOWN -> getString(R.string.activity_state_unknown)
+            ActivityState.STATIONARY -> getString(R.string.activity_state_stationary)
+            ActivityState.WALKING -> getString(R.string.activity_state_walking)
+            ActivityState.RUNNING -> getString(R.string.activity_state_running)
+            ActivityState.IN_VEHICLE -> getString(R.string.activity_state_in_vehicle)
+        }
+
+        binding.currentStateDetail.text = if (speedMps == null || motionEnergy == null) {
+            getString(R.string.current_state_waiting)
+        } else {
+            getString(
+                R.string.current_state_detail,
+                formatDouble(speedMps.toDouble(), 2),
+                formatDouble(motionEnergy, 2)
+            )
+        }
     }
 
     private fun formatDouble(value: Double, digits: Int): String {
