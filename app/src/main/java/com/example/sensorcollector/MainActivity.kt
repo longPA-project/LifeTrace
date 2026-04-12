@@ -3,11 +3,13 @@ package com.example.sensorcollector
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.graphics.BitmapFactory
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationListener
@@ -15,20 +17,45 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.sensorcollector.databinding.ActivityMainBinding
+import com.example.sensorcollector.lifelogging.ActivityState
+import com.example.sensorcollector.lifelogging.AppPage
+import com.example.sensorcollector.lifelogging.CoarseEventEstimator
+import com.example.sensorcollector.lifelogging.CoarseEventType
+import com.example.sensorcollector.lifelogging.ContextSnapshot
+import com.example.sensorcollector.lifelogging.LocalEventEstimate
+import com.example.sensorcollector.lifelogging.MotionSnapshot
+import com.example.sensorcollector.lifelogging.MotionStateClassifier
+import com.example.sensorcollector.lifelogging.PlaceNameResolver
+import com.example.sensorcollector.lifelogging.SamplingDecision
+import com.example.sensorcollector.lifelogging.SamplingMode
+import com.example.sensorcollector.lifelogging.SamplingScheduler
+import com.example.sensorcollector.lifelogging.SnapshotQueueStore
+import com.example.sensorcollector.lifelogging.UploadClient
+import com.example.sensorcollector.lifelogging.LifelogSnapshot
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.FileOutputStream
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -39,25 +66,37 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         private const val AMAP_BASE_URL = "https://restapi.amap.com/v3/geocode/regeo"
         private const val PREFS_NAME = "sensorcollector_prefs"
         private const val KEY_LOCATION_PERMISSION_REQUESTED = "location_permission_requested"
+        private const val SNAPSHOT_RETENTION_MS = 72L * 60L * 60L * 1000L
     }
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var sensorManager: SensorManager
     private lateinit var geocoder: Geocoder
     private lateinit var locationManager: LocationManager
+    private lateinit var placeNameResolver: PlaceNameResolver
+    private lateinit var snapshotQueueStore: SnapshotQueueStore
+    private lateinit var uploadClient: UploadClient
+    private var imageCapture: ImageCapture? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val motionStateClassifier = MotionStateClassifier()
+    private val samplingScheduler = SamplingScheduler()
+    private val coarseEventEstimator = CoarseEventEstimator()
     private var lastResolvedLocationKey: String? = null
     private var placeLookupToken = 0L
     private var latestSpeedMps: Float? = null
     private var latestMotionEnergy = 0.0
     private var lastAccelerationMagnitude = SensorManager.GRAVITY_EARTH.toDouble()
-
-    private enum class ActivityState {
-        UNKNOWN,
-        STATIONARY,
-        WALKING,
-        RUNNING,
-        IN_VEHICLE
-    }
+    private var currentMotionSnapshot = MotionSnapshot(null, 0.0, ActivityState.UNKNOWN)
+    private var currentSamplingDecision = SamplingDecision(SamplingMode.LOW_FREQUENCY, 30_000L, listOf("steady_context"))
+    private var currentEventEstimate = LocalEventEstimate(CoarseEventType.UNKNOWN, 0.0, false, false, listOf("context_stable"))
+    private var activePage = AppPage.CAMERA
+    private var latestLatitude: Double? = null
+    private var latestLongitude: Double? = null
+    private var latestPlaceName: String? = null
+    private var hasFreshPhoto = false
+    private var latestPhotoFile: File? = null
+    private var autoCaptureEnabled = false
+    private var captureLoopScheduled = false
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -70,6 +109,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             }
         }
 
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                startCameraPreview()
+                setAutoCaptureEnabled(true)
+            } else {
+                binding.cameraStatusText.text = getString(R.string.camera_permission_denied)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -78,9 +127,26 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         geocoder = Geocoder(this, Locale.getDefault())
+        placeNameResolver = PlaceNameResolver(
+            amapApiKey = BuildConfig.AMAP_API_KEY,
+            geocoder = geocoder,
+            unavailableText = getString(R.string.place_name_unavailable)
+        )
+        snapshotQueueStore = SnapshotQueueStore(this)
+        uploadClient = UploadClient(BuildConfig.LIFELOG_UPLOAD_URL)
 
         setupSensorAvailability()
-        updateCurrentStateUi(ActivityState.UNKNOWN, null, null)
+        updateCurrentStateUi(
+            currentMotionSnapshot.state,
+            currentMotionSnapshot.speedMps,
+            currentMotionSnapshot.motionEnergy
+        )
+        updateDecisionUi()
+        updateLatestPhotoPreview()
+        setupPageNavigation()
+        binding.captureButton.setOnClickListener {
+            toggleAutoCapture()
+        }
         binding.refreshButton.setOnClickListener {
             handleLocationButtonClick()
         }
@@ -92,12 +158,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         registerSensor(Sensor.TYPE_GYROSCOPE)
         registerSensor(Sensor.TYPE_MAGNETIC_FIELD)
         syncLocationUi()
+        renderActivePage()
+        snapshotQueueStore.deleteExpired(SNAPSHOT_RETENTION_MS)
+        updateLatestPhotoPreview()
+        drainSnapshotQueue()
+        ensureCameraReadyIfPossible()
     }
 
     override fun onPause() {
         super.onPause()
         sensorManager.unregisterListener(this)
         locationManager.removeUpdates(this)
+        stopAutoCaptureLoop()
     }
 
     private fun setupSensorAvailability() {
@@ -108,6 +180,75 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             getString(R.string.sensor_available)
         } else {
             getString(R.string.sensor_unavailable)
+        }
+    }
+
+    private fun setupPageNavigation() {
+        binding.cameraTabButton.setOnClickListener {
+            activePage = AppPage.CAMERA
+            renderActivePage()
+        }
+        binding.dataTabButton.setOnClickListener {
+            activePage = AppPage.DATA
+            renderActivePage()
+        }
+        renderActivePage()
+    }
+
+    private fun renderActivePage() {
+        val isCameraPage = activePage == AppPage.CAMERA
+        binding.cameraPage.visibility = if (isCameraPage) android.view.View.VISIBLE else android.view.View.GONE
+        binding.dataPage.visibility = if (isCameraPage) android.view.View.GONE else android.view.View.VISIBLE
+        binding.cameraTabButton.isEnabled = !isCameraPage
+        binding.dataTabButton.isEnabled = isCameraPage
+        binding.cameraTabButton.alpha = if (isCameraPage) 1.0f else 0.75f
+        binding.dataTabButton.alpha = if (isCameraPage) 0.75f else 1.0f
+    }
+
+    private fun handleCaptureClick() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            toggleAutoCapture()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun toggleAutoCapture() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            return
+        }
+
+        if (!autoCaptureEnabled) {
+            startCameraPreview()
+            setAutoCaptureEnabled(true)
+        } else {
+            setAutoCaptureEnabled(false)
+        }
+    }
+
+    private fun setAutoCaptureEnabled(enabled: Boolean) {
+        autoCaptureEnabled = enabled
+        binding.captureButton.text = if (enabled) {
+            getString(R.string.auto_capture_stop)
+        } else {
+            getString(R.string.auto_capture_start)
+        }
+        binding.cameraStatusText.text = if (enabled) {
+            getString(R.string.camera_auto_capture_running)
+        } else {
+            getString(R.string.camera_waiting)
+        }
+
+        if (enabled) {
+            requestImmediateCapture()
+            scheduleNextCapture()
+        } else {
+            stopAutoCaptureLoop()
         }
     }
 
@@ -286,8 +427,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
                 binding.accelerometerValue.text = formatVector(event.values)
-                latestMotionEnergy = updateMotionEnergy(event.values)
-                updateCurrentStateUi(classifyActivityState(), latestSpeedMps, latestMotionEnergy)
+                motionStateClassifier.updateMotionEnergy(event.values)
+                recalculateLifeloggingState()
             }
             Sensor.TYPE_GYROSCOPE -> {
                 binding.gyroscopeValue.text = formatVector(event.values)
@@ -310,6 +451,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private fun renderLocation(location: Location) {
         binding.locationPermissionStatus.text = getString(R.string.location_listening)
         latestSpeedMps = location.speed.takeIf { location.hasSpeed() }
+        latestLatitude = location.latitude
+        latestLongitude = location.longitude
         binding.latitudeValue.text = formatDouble(location.latitude, 6)
         binding.longitudeValue.text = formatDouble(location.longitude, 6)
         binding.altitudeValue.text = if (location.hasAltitude()) {
@@ -333,7 +476,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             getString(R.string.value_unavailable)
         }
         binding.providerValue.text = location.provider ?: getString(R.string.value_unavailable)
-        updateCurrentStateUi(classifyActivityState(), latestSpeedMps, latestMotionEnergy)
+        recalculateLifeloggingState()
         resolvePlaceName(location)
     }
 
@@ -347,21 +490,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         val lookupToken = ++placeLookupToken
         binding.placeNameValue.text = getString(R.string.place_name_loading)
         thread {
-            val amapResult = fetchAmapPlaceName(location)
-            if (amapResult != null) {
-                runOnUiThread {
-                    if (lookupToken == placeLookupToken) {
-                        binding.placeNameValue.text = amapResult.displayName
-                            ?: getString(R.string.place_name_unavailable)
-                    }
-                }
-                return@thread
-            }
-
-            val localName = resolvePlaceNameWithGeocoder(location)
+            val localName = placeNameResolver.fetchBestPlaceName(location)
             runOnUiThread {
                 if (lookupToken == placeLookupToken) {
                     binding.placeNameValue.text = localName
+                    latestPlaceName = localName
+                    recalculateLifeloggingState()
                 }
             }
         }
@@ -573,6 +707,251 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
                 formatDouble(speedMps.toDouble(), 2),
                 formatDouble(motionEnergy, 2)
             )
+        }
+    }
+
+    private fun recalculateLifeloggingState() {
+        currentMotionSnapshot = motionStateClassifier.classify(latestSpeedMps)
+        val context = ContextSnapshot(
+            placeName = latestPlaceName,
+            latitude = latestLatitude,
+            longitude = latestLongitude,
+            motion = currentMotionSnapshot
+        )
+        currentSamplingDecision = samplingScheduler.onContextUpdated(context)
+        currentEventEstimate = coarseEventEstimator.estimate(
+            current = context,
+            samplingDecision = currentSamplingDecision,
+            hasFreshPhoto = hasFreshPhoto
+        )
+        updateCurrentStateUi(
+            currentMotionSnapshot.state,
+            currentMotionSnapshot.speedMps,
+            currentMotionSnapshot.motionEnergy
+        )
+        updateDecisionUi()
+    }
+
+    private fun updateDecisionUi() {
+        binding.eventEstimateValue.text = getString(
+            R.string.event_estimate_value,
+            eventTypeLabel(currentEventEstimate.eventType),
+            formatDouble(currentEventEstimate.confidence * 100.0, 0)
+        )
+        binding.uploadDecisionValue.text = getString(
+            R.string.upload_decision_value,
+            yesNo(currentEventEstimate.worthUploading),
+            yesNo(currentEventEstimate.possibleNewEvent),
+            samplingModeLabel(currentSamplingDecision)
+        )
+    }
+
+    private fun eventTypeLabel(eventType: CoarseEventType): String {
+        return when (eventType) {
+            CoarseEventType.UNKNOWN -> getString(R.string.event_unknown)
+            CoarseEventType.COMMUTING -> getString(R.string.event_commuting)
+            CoarseEventType.STUDYING -> getString(R.string.event_studying)
+            CoarseEventType.EATING -> getString(R.string.event_eating)
+            CoarseEventType.SHOPPING -> getString(R.string.event_shopping)
+            CoarseEventType.REPAIRING -> getString(R.string.event_repairing)
+        }
+    }
+
+    private fun yesNo(value: Boolean): String {
+        return if (value) getString(R.string.yes_value) else getString(R.string.no_value)
+    }
+
+    private fun samplingModeLabel(decision: SamplingDecision): String {
+        val seconds = decision.intervalMs / 1000L
+        return when (decision.mode) {
+            SamplingMode.LOW_FREQUENCY -> getString(R.string.sampling_low_frequency, seconds)
+            SamplingMode.HIGH_FREQUENCY -> getString(R.string.sampling_high_frequency, seconds)
+        }
+    }
+
+    private fun ensureCameraReadyIfPossible() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startCameraPreview()
+        }
+    }
+
+    private fun startCameraPreview() {
+        binding.cameraStatusText.text = getString(R.string.camera_preview_starting)
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            val preview = androidx.camera.core.Preview.Builder().build().also {
+                it.setSurfaceProvider(binding.cameraPreview.surfaceProvider)
+            }
+            imageCapture = ImageCapture.Builder().build()
+
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                this,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                imageCapture
+            )
+            binding.cameraStatusText.text = getString(R.string.camera_ready)
+            if (autoCaptureEnabled) {
+                requestImmediateCapture()
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun requestImmediateCapture() {
+        mainHandler.postDelayed({
+            if (!autoCaptureEnabled) {
+                return@postDelayed
+            }
+            captureCurrentFrame()
+        }, 300L)
+    }
+
+    private fun scheduleNextCapture() {
+        if (!autoCaptureEnabled || captureLoopScheduled) {
+            return
+        }
+
+        captureLoopScheduled = true
+        mainHandler.postDelayed({
+            captureLoopScheduled = false
+            if (!autoCaptureEnabled) {
+                return@postDelayed
+            }
+            captureCurrentFrame()
+            scheduleNextCapture()
+        }, currentSamplingDecision.intervalMs)
+    }
+
+    private fun stopAutoCaptureLoop() {
+        captureLoopScheduled = false
+        mainHandler.removeCallbacksAndMessages(null)
+    }
+
+    private fun captureCurrentFrame() {
+        binding.cameraStatusText.text = getString(R.string.camera_capture_requested)
+        val imageCapture = imageCapture ?: run {
+            binding.cameraStatusText.text = getString(R.string.camera_not_ready)
+            return
+        }
+        val outputFile = File(
+            snapshotQueueStore.imagesDir(),
+            "photo_${System.currentTimeMillis()}.jpg"
+        )
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
+        imageCapture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    latestPhotoFile = outputFile
+                    showPhotoPreview(outputFile)
+                    hasFreshPhoto = true
+                    recalculateLifeloggingState()
+                    enqueueSnapshotIfNeeded()
+                    binding.cameraStatusText.text = getString(R.string.camera_capture_saved)
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    binding.cameraStatusText.text = getString(
+                        R.string.camera_capture_failed_with_reason,
+                        exception.message ?: exception.imageCaptureError.toString()
+                    )
+                }
+            }
+        )
+    }
+
+    private fun savePreviewBitmap(bitmap: Bitmap): File? {
+        val file = File(
+            snapshotQueueStore.imagesDir(),
+            "photo_${System.currentTimeMillis()}.jpg"
+        )
+        return runCatching {
+            FileOutputStream(file).use { output ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)
+                output.flush()
+            }
+            file
+        }.getOrNull()
+    }
+
+    private fun updateLatestPhotoPreview() {
+        val latestImage = snapshotQueueStore.imagesDir()
+            .listFiles()
+            ?.filter { it.isFile && it.extension.equals("jpg", ignoreCase = true) }
+            ?.maxByOrNull(File::lastModified)
+
+        if (latestImage == null) {
+            binding.photoPreview.setImageDrawable(null)
+            binding.photoPreviewLabel.text = getString(R.string.photo_preview_waiting)
+            return
+        }
+
+        showPhotoPreview(latestImage)
+    }
+
+    private fun showPhotoPreview(photoFile: File) {
+        val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
+        if (bitmap == null) {
+            binding.photoPreview.setImageDrawable(null)
+            binding.photoPreviewLabel.text = getString(R.string.photo_preview_missing)
+            return
+        }
+
+        latestPhotoFile = photoFile
+        binding.photoPreview.setImageBitmap(bitmap)
+        binding.photoPreviewLabel.text = getString(
+            R.string.photo_preview_saved,
+            buildPhotoLabel(photoFile)
+        )
+    }
+
+    private fun buildPhotoLabel(photoFile: File): String {
+        val formattedTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            .format(Date(photoFile.lastModified()))
+        return "${photoFile.name} ($formattedTime)"
+    }
+
+    private fun enqueueSnapshotIfNeeded() {
+        if (!currentEventEstimate.worthUploading) {
+            return
+        }
+
+        val photoFile = latestPhotoFile ?: return
+        val snapshot = LifelogSnapshot(
+            id = UUID.randomUUID().toString(),
+            timestampMs = System.currentTimeMillis(),
+            placeName = latestPlaceName,
+            latitude = latestLatitude,
+            longitude = latestLongitude,
+            motion = currentMotionSnapshot,
+            samplingDecision = currentSamplingDecision,
+            eventEstimate = currentEventEstimate,
+            imageFileName = photoFile.name
+        )
+        snapshotQueueStore.save(snapshot)
+        snapshotQueueStore.deleteExpired(SNAPSHOT_RETENTION_MS)
+        drainSnapshotQueue()
+    }
+
+    private fun drainSnapshotQueue() {
+        snapshotQueueStore.deleteExpired(SNAPSHOT_RETENTION_MS)
+        if (!uploadClient.isConfigured()) {
+            return
+        }
+
+        thread {
+            snapshotQueueStore.listSnapshots().forEach { snapshot ->
+                val imageFile = File(snapshotQueueStore.imagesDir(), snapshot.imageFileName)
+                val uploaded = uploadClient.upload(snapshot, imageFile)
+                if (uploaded) {
+                    snapshotQueueStore.delete(snapshot.id, snapshot.imageFileName)
+                }
+            }
         }
     }
 
