@@ -96,7 +96,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private var hasFreshPhoto = false
     private var latestPhotoFile: File? = null
     private var autoCaptureEnabled = false
-    private var captureLoopScheduled = false
+    private val captureRunnable = Runnable {
+        if (!autoCaptureEnabled) {
+            return@Runnable
+        }
+        captureCurrentFrame()
+    }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -246,7 +251,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
         if (enabled) {
             requestImmediateCapture()
-            scheduleNextCapture()
         } else {
             stopAutoCaptureLoop()
         }
@@ -802,6 +806,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun requestImmediateCapture() {
+        mainHandler.removeCallbacks(captureRunnable)
         mainHandler.postDelayed({
             if (!autoCaptureEnabled) {
                 return@postDelayed
@@ -811,30 +816,22 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun scheduleNextCapture() {
-        if (!autoCaptureEnabled || captureLoopScheduled) {
+        if (!autoCaptureEnabled) {
             return
         }
-
-        captureLoopScheduled = true
-        mainHandler.postDelayed({
-            captureLoopScheduled = false
-            if (!autoCaptureEnabled) {
-                return@postDelayed
-            }
-            captureCurrentFrame()
-            scheduleNextCapture()
-        }, currentSamplingDecision.intervalMs)
+        mainHandler.removeCallbacks(captureRunnable)
+        mainHandler.postDelayed(captureRunnable, currentSamplingDecision.intervalMs)
     }
 
     private fun stopAutoCaptureLoop() {
-        captureLoopScheduled = false
-        mainHandler.removeCallbacksAndMessages(null)
+        mainHandler.removeCallbacks(captureRunnable)
     }
 
     private fun captureCurrentFrame() {
         binding.cameraStatusText.text = getString(R.string.camera_capture_requested)
         val imageCapture = imageCapture ?: run {
             binding.cameraStatusText.text = getString(R.string.camera_not_ready)
+            scheduleNextCapture()
             return
         }
         val outputFile = File(
@@ -853,6 +850,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
                     recalculateLifeloggingState()
                     enqueueSnapshotIfNeeded()
                     binding.cameraStatusText.text = getString(R.string.camera_capture_saved)
+                    scheduleNextCapture()
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -860,6 +858,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
                         R.string.camera_capture_failed_with_reason,
                         exception.message ?: exception.imageCaptureError.toString()
                     )
+                    scheduleNextCapture()
                 }
             }
         )
