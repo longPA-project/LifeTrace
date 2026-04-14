@@ -940,14 +940,36 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private fun drainSnapshotQueue() {
         snapshotQueueStore.deleteExpired(SNAPSHOT_RETENTION_MS)
         if (!uploadClient.isConfigured()) {
+            mainHandler.post {
+                binding.uploadStatusText.text = getString(R.string.upload_status_not_configured)
+            }
             return
         }
 
         thread {
-            snapshotQueueStore.listSnapshots().forEach { snapshot ->
+            val snapshots = snapshotQueueStore.listSnapshots()
+            if (snapshots.isEmpty()) {
+                mainHandler.post {
+                    binding.uploadStatusText.text = getString(R.string.upload_status_queue_empty)
+                }
+                return@thread
+            }
+
+            snapshots.forEach { snapshot ->
                 val imageFile = File(snapshotQueueStore.imagesDir(), snapshot.imageFileName)
-                val uploaded = uploadClient.upload(snapshot, imageFile)
-                if (uploaded) {
+                val result = uploadClient.upload(snapshot, imageFile)
+                mainHandler.post {
+                    binding.uploadStatusText.text = getString(
+                        if (result.success) {
+                            R.string.upload_status_success
+                        } else {
+                            R.string.upload_status_failed
+                        },
+                        snapshot.imageFileName,
+                        result.detail
+                    )
+                }
+                if (result.success) {
                     snapshotQueueStore.delete(snapshot.id, snapshot.imageFileName)
                 }
             }

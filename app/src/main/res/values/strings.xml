@@ -26,6 +26,11 @@
     <string name="photo_preview_missing">Latest cached photo is unavailable.</string>
     <string name="event_estimate_waiting">Event estimate: waiting for context.</string>
     <string name="upload_decision_waiting">Upload decision: waiting for context.</string>
+    <string name="upload_status_waiting">Upload status: waiting.</string>
+    <string name="upload_status_not_configured">Upload status: server URL not configured.</string>
+    <string name="upload_status_queue_empty">Upload status: queue empty.</string>
+    <string name="upload_status_success">Upload status: sent %1$s (%2$s)</string>
+    <string name="upload_status_failed">Upload status: failed %1$s (%2$s)</string>
     <string name="event_estimate_value">Event estimate: %1$s (%2$s%%)</string>
     <string name="upload_decision_value">Upload: %1$s | New event: %2$s | Sampling: %3$s</string>
     <string name="yes_value">Yes</string>

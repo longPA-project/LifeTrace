@@ -1,0 +1,23 @@
+{
+  "id": "b14ad3d9-2d21-4777-a8e0-cf68cd4ebc67",
+  "timestampMs": 1776097770919,
+  "placeName": "西土城路辅路, 北京邮电大学(海淀校区), 北京市, 中国",
+  "latitude": 39.9589124,
+  "longitude": 116.35014616,
+  "speedMps": 0.0,
+  "motionEnergy": 0.03809914859267811,
+  "state": "STATIONARY",
+  "samplingMode": "HIGH_FREQUENCY",
+  "samplingIntervalMs": 5000,
+  "eventType": "UNKNOWN",
+  "confidence": 0.35,
+  "worthUploading": true,
+  "possibleNewEvent": true,
+  "samplingReasons": [
+    "boost_window_active"
+  ],
+  "eventReasons": [
+    "fresh_photo"
+  ],
+  "imageFileName": "photo_1776097770093.jpg"
+}

@@ -73,9 +73,9 @@ class UploadClientTest {
                 imageFileName = tempImage.name
             )
 
-            val uploaded = client.upload(snapshot, tempImage)
+            val result = client.upload(snapshot, tempImage)
 
-            assertTrue(uploaded)
+            assertTrue(result.success)
             val contentType = contentTypeRef.get().orEmpty()
             assertTrue(contentType.startsWith("multipart/form-data; boundary="))
 

@@ -33,6 +33,28 @@ Set these values before testing the full upload pipeline:
 
 They can be defined in `local.properties`.
 
+Example:
+
+```properties
+lifelog.upload.url=http://192.168.3.136:8000/upload
+```
+
+Use the LAN IP of this computer, not `localhost`. The phone and this computer must be on the same network.
+
+## Receive uploads on this computer
+
+Start the local receiver on this computer:
+
+```bash
+cd SensorCollector
+python3 tools/local_upload_server.py
+```
+
+Uploaded files will be saved under:
+
+- `local_uploads/images/`: JPEG photos
+- `local_uploads/metadata/`: JSON metadata for each snapshot
+
 ## Open the project
 
 1. Open `SensorCollector` with Android Studio.
@@ -46,4 +68,5 @@ They can be defined in `local.properties`.
 - GPS and camera features should be tested on a real device, not an emulator.
 - If a sensor is missing on the phone, the app will show it as unavailable.
 - If `lifelog.upload.url` is empty, the app still captures and caches snapshots locally, but upload is skipped.
+- Android 9+ blocks plain HTTP by default. This project now explicitly allows cleartext traffic so uploads to a local `http://<电脑IP>:8000/upload` server work.
 - Uploaded snapshots are removed from the local cache immediately after success.

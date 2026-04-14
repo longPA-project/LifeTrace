@@ -1,10 +1,27 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
-val amapApiKey = (project.findProperty("amap.api.key") as String?) ?: ""
-val lifelogUploadUrl = (project.findProperty("lifelog.upload.url") as String?) ?: ""
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { input ->
+            load(input)
+        }
+    }
+}
+
+fun readConfig(name: String): String {
+    return (project.findProperty(name) as String?)
+        ?: localProperties.getProperty(name)
+        ?: ""
+}
+
+val amapApiKey = readConfig("amap.api.key")
+val lifelogUploadUrl = readConfig("lifelog.upload.url")
 
 android {
     namespace = "com.example.sensorcollector"
