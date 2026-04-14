@@ -1,11 +1,26 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
+from datetime import datetime
+import subprocess
+import sys
+import threading
+import os
 
 
 ROOT = Path(__file__).resolve().parent.parent / "local_uploads"
 IMAGES_DIR = ROOT / "images"
 METADATA_DIR = ROOT / "metadata"
+LAVIS_ROOT = Path(__file__).resolve().parent.parent.parent / "LAVIS"
+REALTIME_ROOT = LAVIS_ROOT / "data" / "realtime_dataset"
+REALTIME_IMAGES_DIR = REALTIME_ROOT / "images"
+REALTIME_METADATA_DIR = REALTIME_ROOT / "metadata"
+REALTIME_OUTPUT_DIR = LAVIS_ROOT / "data" / "realtime_results"
+LAVIS_PYTHON = os.environ.get("LAVIS_PYTHON", sys.executable)
+
+_processing_lock = threading.Lock()
+_processing_active = False
+_processing_pending = False
 
 
 class UploadHandler(BaseHTTPRequestHandler):
@@ -45,17 +60,35 @@ class UploadHandler(BaseHTTPRequestHandler):
 
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         METADATA_DIR.mkdir(parents=True, exist_ok=True)
+        REALTIME_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        REALTIME_METADATA_DIR.mkdir(parents=True, exist_ok=True)
         (IMAGES_DIR / image_name).write_bytes(image_bytes)
         (METADATA_DIR / metadata_name).write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
             encoding="utf-8"
         )
+        (REALTIME_IMAGES_DIR / image_name).write_bytes(image_bytes)
+        (REALTIME_METADATA_DIR / metadata_name).write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        client_host, client_port = self.client_address
+        print(
+            f"[{timestamp}] upload from {client_host}:{client_port} -> "
+            f"image={image_name}, metadata={metadata_name}",
+            flush=True
+        )
+        trigger_realtime_processing()
 
         body = json.dumps(
             {
                 "ok": True,
                 "savedImage": str(IMAGES_DIR / image_name),
                 "savedMetadata": str(METADATA_DIR / metadata_name),
+                "realtimeImage": str(REALTIME_IMAGES_DIR / image_name),
+                "realtimeMetadata": str(REALTIME_METADATA_DIR / metadata_name),
             },
             ensure_ascii=False
         ).encode("utf-8")
@@ -99,9 +132,65 @@ def parse_multipart(body: bytes, boundary: bytes) -> dict[str, list[bytes]]:
     return result
 
 
+def trigger_realtime_processing():
+    global _processing_active, _processing_pending
+    with _processing_lock:
+        if _processing_active:
+            _processing_pending = True
+            return
+        _processing_active = True
+
+    threading.Thread(target=_run_realtime_pipeline, daemon=True).start()
+
+
+def _run_realtime_pipeline():
+    global _processing_active, _processing_pending
+    while True:
+        started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{started_at}] starting realtime caption pipeline", flush=True)
+        command = [
+            LAVIS_PYTHON,
+            str(LAVIS_ROOT / "process_sensorcollector_uploads.py"),
+            "--images-dir",
+            str(REALTIME_IMAGES_DIR),
+            "--metadata-dir",
+            str(REALTIME_METADATA_DIR),
+            "--output-dir",
+            str(REALTIME_OUTPUT_DIR),
+        ]
+        result = subprocess.run(
+            command,
+            cwd=LAVIS_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        finished_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if result.returncode == 0:
+            print(f"[{finished_at}] realtime caption pipeline finished", flush=True)
+            if result.stdout.strip():
+                print(result.stdout.strip(), flush=True)
+        else:
+            print(
+                f"[{finished_at}] realtime caption pipeline failed: "
+                f"{result.stderr.strip() or result.stdout.strip()}",
+                flush=True
+            )
+
+        with _processing_lock:
+            if _processing_pending:
+                _processing_pending = False
+                continue
+            _processing_active = False
+            break
+
+
 if __name__ == "__main__":
     ROOT.mkdir(parents=True, exist_ok=True)
+    REALTIME_ROOT.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(("0.0.0.0", 8000), UploadHandler)
     print("Listening on http://0.0.0.0:8000/upload")
     print(f"Saving files under: {ROOT}")
+    print(f"Mirroring realtime dataset under: {REALTIME_ROOT}")
+    print(f"Realtime outputs under: {REALTIME_OUTPUT_DIR}")
+    print(f"LAVIS python: {LAVIS_PYTHON}")
     server.serve_forever()
