@@ -1,6 +1,10 @@
-# SensorCollector
+# LIFETRACE
 
 Android app for lightweight lifelogging data collection on a phone.
+
+# Dataset Availability
+
+This repository provides the sensing software used for lifelog data collection in our study. The dataset collected in this study will be made publicly available after the paper is published.
 
 ## Features
 
