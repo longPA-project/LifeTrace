@@ -40,7 +40,7 @@ They can be defined in `local.properties`.
 Example:
 
 ```properties
-lifelog.upload.url=http://192.168.3.136:8000/upload
+lifelog.upload.url=http://xxx:8000/upload
 ```
 
 Use the LAN IP of this computer, not `localhost`. The phone and this computer must be on the same network.
