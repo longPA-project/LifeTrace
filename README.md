@@ -27,14 +27,16 @@ The sampling policy uses location and motion observations to identify context ch
 ﻿
 The app supports the following settings in the project-root
 `local.properties` file:
-﻿
+
+ 
 | Property | Purpose |
 | --- | --- |
 | `lifelog.upload.url` | Endpoint used to receive snapshot uploads |
 | `amap.api.key` | Key for AMap reverse geocoding |
-﻿
+
+
+ 
 Example:
-﻿
 ```properties
 lifelog.upload.url=http://XXXX:XXXX/upload
 amap.api.key=YOUR_AMAP_API_KEY
