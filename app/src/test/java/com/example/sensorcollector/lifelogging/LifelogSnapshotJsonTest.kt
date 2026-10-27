@@ -14,6 +14,7 @@ class LifelogSnapshotJsonTest {
             placeName = "Library",
             latitude = 31.2304,
             longitude = 121.4737,
+            altitude = 12.0,
             motion = MotionSnapshot(
                 speedMps = 1.8f,
                 motionEnergy = 0.42,
@@ -48,6 +49,7 @@ class LifelogSnapshotJsonTest {
                 placeName = null,
                 latitude = null,
                 longitude = null,
+                altitude = null,
                 motion = MotionSnapshot(
                     speedMps = null,
                     motionEnergy = 0.0,

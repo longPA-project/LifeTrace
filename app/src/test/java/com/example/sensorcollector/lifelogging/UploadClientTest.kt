@@ -53,6 +53,7 @@ class UploadClientTest {
                 placeName = "Test Place",
                 latitude = 30.0,
                 longitude = 120.0,
+                altitude = null,
                 motion = MotionSnapshot(
                     speedMps = 1.5f,
                     motionEnergy = 0.8,

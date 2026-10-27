@@ -37,7 +37,10 @@ data class ContextSnapshot(
     val placeName: String?,
     val latitude: Double?,
     val longitude: Double?,
-    val motion: MotionSnapshot
+    val motion: MotionSnapshot,
+    val locationAccuracyMeters: Float? = null,
+    val locationElapsedRealtimeMs: Long? = null,
+    val placeElapsedRealtimeMs: Long? = null
 )
 
 data class SamplingDecision(

@@ -3,13 +3,13 @@ package com.example.sensorcollector
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.graphics.BitmapFactory
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationListener
@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -30,25 +31,28 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.sensorcollector.databinding.ActivityMainBinding
 import com.example.sensorcollector.lifelogging.ActivityState
+import com.example.sensorcollector.lifelogging.AndroidSamplingResources
 import com.example.sensorcollector.lifelogging.AppPage
+import com.example.sensorcollector.lifelogging.CaptureCadence
 import com.example.sensorcollector.lifelogging.CoarseEventEstimator
 import com.example.sensorcollector.lifelogging.CoarseEventType
 import com.example.sensorcollector.lifelogging.ContextSnapshot
+import com.example.sensorcollector.lifelogging.LifelogSnapshot
 import com.example.sensorcollector.lifelogging.LocalEventEstimate
 import com.example.sensorcollector.lifelogging.LscDatasetExporter
 import com.example.sensorcollector.lifelogging.MotionSnapshot
 import com.example.sensorcollector.lifelogging.MotionStateClassifier
 import com.example.sensorcollector.lifelogging.PlaceNameResolver
+import com.example.sensorcollector.lifelogging.SamplingConfig
 import com.example.sensorcollector.lifelogging.SamplingDecision
 import com.example.sensorcollector.lifelogging.SamplingMode
 import com.example.sensorcollector.lifelogging.SamplingScheduler
 import com.example.sensorcollector.lifelogging.SnapshotQueueStore
 import com.example.sensorcollector.lifelogging.UploadClient
-import com.example.sensorcollector.lifelogging.LifelogSnapshot
 import org.json.JSONObject
 import java.io.BufferedReader
-import java.io.FileOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -66,6 +70,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         private const val PREFS_NAME = "sensorcollector_prefs"
         private const val KEY_LOCATION_PERMISSION_REQUESTED = "location_permission_requested"
         private const val SNAPSHOT_RETENTION_MS = 72L * 60L * 60L * 1000L
+        private const val CONTEXT_REFRESH_MS = 1_000L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -76,31 +81,48 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private lateinit var snapshotQueueStore: SnapshotQueueStore
     private lateinit var lscDatasetExporter: LscDatasetExporter
     private lateinit var uploadClient: UploadClient
+    private lateinit var samplingResources: AndroidSamplingResources
     private var imageCapture: ImageCapture? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val motionStateClassifier = MotionStateClassifier()
-    private val samplingScheduler = SamplingScheduler()
+    private val samplingConfig = SamplingConfig()
+    private val samplingScheduler = SamplingScheduler(samplingConfig)
+    private val captureCadence = CaptureCadence()
     private val coarseEventEstimator = CoarseEventEstimator()
     private var lastResolvedLocationKey: String? = null
+    private var lastPlaceLookupMs: Long? = null
     private var placeLookupToken = 0L
     private var latestSpeedMps: Float? = null
     private var currentMotionSnapshot = MotionSnapshot(null, 0.0, ActivityState.UNKNOWN)
-    private var currentSamplingDecision = SamplingDecision(SamplingMode.LOW_FREQUENCY, 15_000L, listOf("steady_context"))
+    private var currentSamplingDecision = SamplingDecision(
+        SamplingMode.LOW_FREQUENCY,
+        samplingConfig.lowFrequencyIntervalMs,
+        listOf("steady_context")
+    )
     private var currentEventEstimate = LocalEventEstimate(CoarseEventType.UNKNOWN, 0.0, false, false, listOf("context_stable"))
     private var activePage = AppPage.CAMERA
-    private var latestLatitude: Double? = null
-    private var latestLongitude: Double? = null
-    private var latestAltitude: Double? = null
     private var latestPlaceName: String? = null
+    private var latestLocation: Location? = null
+    private var latestPlaceElapsedRealtimeMs: Long? = null
     private var hasFreshPhoto = false
     private var latestPhotoFile: File? = null
     private var autoCaptureEnabled = false
+    private var isForeground = false
+    private var cameraStarting = false
+    private var cameraRequestGeneration = 0L
     private var lastExportSummary: String? = null
     private val captureRunnable = Runnable {
-        if (!autoCaptureEnabled) {
+        if (!autoCaptureEnabled || !isForeground) {
             return@Runnable
         }
         captureCurrentFrame()
+    }
+    private val contextRefreshRunnable = object : Runnable {
+        override fun run() {
+            if (!isForeground) return
+            recalculateLifeloggingState()
+            mainHandler.postDelayed(this, CONTEXT_REFRESH_MS)
+        }
     }
 
     private val permissionLauncher =
@@ -140,6 +162,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         snapshotQueueStore = SnapshotQueueStore(this)
         lscDatasetExporter = LscDatasetExporter(this)
         uploadClient = UploadClient(BuildConfig.LIFELOG_UPLOAD_URL)
+        samplingResources = AndroidSamplingResources(this)
 
         setupSensorAvailability()
         updateCurrentStateUi(
@@ -161,6 +184,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
     override fun onResume() {
         super.onResume()
+        isForeground = true
+        motionStateClassifier.reset()
+        samplingScheduler.reset()
+        mainHandler.post(contextRefreshRunnable)
         registerSensor(Sensor.TYPE_ACCELEROMETER)
         registerSensor(Sensor.TYPE_GYROSCOPE)
         registerSensor(Sensor.TYPE_MAGNETIC_FIELD)
@@ -173,10 +200,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     override fun onPause() {
-        super.onPause()
+        isForeground = false
+        cameraRequestGeneration += 1L
+        placeLookupToken += 1L
+        cameraStarting = false
+        imageCapture = null
         sensorManager.unregisterListener(this)
         locationManager.removeUpdates(this)
         stopAutoCaptureLoop()
+        mainHandler.removeCallbacks(contextRefreshRunnable)
+        super.onPause()
     }
 
     private fun setupSensorAvailability() {
@@ -239,6 +272,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun setAutoCaptureEnabled(enabled: Boolean) {
+        if (enabled && !autoCaptureEnabled && !captureCadence.isCaptureInFlight) {
+            captureCadence.reset()
+        }
         autoCaptureEnabled = enabled
         binding.captureButton.text = if (enabled) {
             getString(R.string.auto_capture_stop)
@@ -252,7 +288,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         }
 
         if (enabled) {
-            requestImmediateCapture()
+            scheduleNextCapture()
         } else {
             stopAutoCaptureLoop()
         }
@@ -418,28 +454,34 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
         binding.refreshButton.setText(R.string.request_permission)
         binding.locationPermissionStatus.text = getString(R.string.location_waiting_for_fix)
-        locationManager.removeUpdates(this)
-        locationManager.requestLocationUpdates(
-            LocationManager.GPS_PROVIDER,
-            1000L,
-            0f,
-            this,
-            Looper.getMainLooper()
-        )
-        locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)?.let(::renderLocation)
+        try {
+            locationManager.removeUpdates(this)
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER,
+                1000L,
+                0f,
+                this,
+                Looper.getMainLooper()
+            )
+            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)?.let(::renderLocation)
+        } catch (_: SecurityException) {
+            // Permission can be revoked after the initial check.
+            latestLocation = null
+            latestSpeedMps = null
+            updatePermissionUiAfterDenial()
+            recalculateLifeloggingState()
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
                 binding.accelerometerValue.text = formatVector(event.values)
-                motionStateClassifier.updateAccelerometer(event.values)
-                recalculateLifeloggingState()
+                motionStateClassifier.updateAccelerometer(event.values, event.timestamp / 1_000_000L)
             }
             Sensor.TYPE_GYROSCOPE -> {
                 binding.gyroscopeValue.text = formatVector(event.values)
-                motionStateClassifier.updateGyroscope(event.values)
-                recalculateLifeloggingState()
+                motionStateClassifier.updateGyroscope(event.values, event.timestamp / 1_000_000L)
             }
             Sensor.TYPE_MAGNETIC_FIELD -> {
                 binding.magnetometerValue.text = formatVector(event.values)
@@ -457,11 +499,21 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun renderLocation(location: Location) {
+        val nowMs = SystemClock.elapsedRealtime()
+        val observedAtMs = location.elapsedRealtimeNanos / 1_000_000L
+        if (nowMs - observedAtMs !in 0..samplingConfig.maxLocationAgeMs ||
+            !location.latitude.isFinite() || location.latitude !in -90.0..90.0 ||
+            !location.longitude.isFinite() || location.longitude !in -180.0..180.0 ||
+            latestLocation?.let { location.elapsedRealtimeNanos <= it.elapsedRealtimeNanos } == true
+        ) return
+        latestLocation = Location(location)
         binding.locationPermissionStatus.text = getString(R.string.location_listening)
-        latestSpeedMps = location.speed.takeIf { location.hasSpeed() }
-        latestLatitude = location.latitude
-        latestLongitude = location.longitude
-        latestAltitude = location.altitude.takeIf { location.hasAltitude() }
+        latestSpeedMps = location.speed.takeIf {
+            location.hasSpeed() && it.isFinite() && it in 0f..samplingConfig.maxTravelSpeedMps.toFloat() &&
+                location.hasAccuracy() && location.accuracy.isFinite() &&
+                location.accuracy in 0f..samplingConfig.maxLocationAccuracyMeters &&
+                (!location.hasSpeedAccuracy() || location.speedAccuracyMetersPerSecond <= 2f)
+        }
         binding.latitudeValue.text = formatDouble(location.latitude, 6)
         binding.longitudeValue.text = formatDouble(location.longitude, 6)
         binding.altitudeValue.text = if (location.hasAltitude()) {
@@ -486,24 +538,40 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         }
         binding.providerValue.text = location.provider ?: getString(R.string.value_unavailable)
         recalculateLifeloggingState()
-        resolvePlaceName(location)
+        if (location.hasAccuracy() && location.accuracy in 0f..samplingConfig.maxLocationAccuracyMeters) {
+            resolvePlaceName(location)
+        }
     }
 
     private fun resolvePlaceName(location: Location) {
         val locationKey = "${formatDouble(location.latitude, 4)},${formatDouble(location.longitude, 4)}"
-        if (lastResolvedLocationKey == locationKey) {
+        val nowMs = SystemClock.elapsedRealtime()
+        // Coordinate changes must not bypass the lookup rate limit.
+        if (lastPlaceLookupMs?.let { nowMs - it < samplingConfig.placeLookupIntervalMs } == true) return
+        if (lastResolvedLocationKey == locationKey &&
+            latestPlaceElapsedRealtimeMs?.let { nowMs - it < samplingConfig.maxPlaceAgeMs } == true
+        ) {
             return
         }
 
         lastResolvedLocationKey = locationKey
+        lastPlaceLookupMs = nowMs
         val lookupToken = ++placeLookupToken
         binding.placeNameValue.text = getString(R.string.place_name_loading)
         thread {
-            val localName = placeNameResolver.fetchBestPlaceName(location)
+            val localName = runCatching { placeNameResolver.fetchBestPlaceName(location) }
+                .getOrDefault(getString(R.string.place_name_unavailable))
             runOnUiThread {
-                if (lookupToken == placeLookupToken) {
+                if (lookupToken == placeLookupToken && isForeground) {
                     binding.placeNameValue.text = localName
-                    latestPlaceName = localName
+                    latestPlaceName = localName.takeUnless {
+                        it.isBlank() || it == getString(R.string.place_name_unavailable)
+                    }
+                    latestPlaceElapsedRealtimeMs = if (latestPlaceName != null) {
+                        location.elapsedRealtimeNanos / 1_000_000L
+                    } else {
+                        null
+                    }
                     recalculateLifeloggingState()
                 }
             }
@@ -702,14 +770,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun recalculateLifeloggingState() {
-        currentMotionSnapshot = motionStateClassifier.classify(latestSpeedMps)
-        val context = ContextSnapshot(
-            placeName = latestPlaceName,
-            latitude = latestLatitude,
-            longitude = latestLongitude,
-            motion = currentMotionSnapshot
+        val nowMs = SystemClock.elapsedRealtime()
+        val location = freshLocation(nowMs)
+        currentMotionSnapshot = motionStateClassifier.classify(
+            latestSpeedMps.takeIf { location != null },
+            nowMs
         )
-        currentSamplingDecision = samplingScheduler.onContextUpdated(context)
+        val context = currentContextSnapshot(nowMs)
+        val previousIntervalMs = currentSamplingDecision.intervalMs
+        currentSamplingDecision = samplingScheduler.onContextUpdated(context, nowMs, samplingResources.read())
         currentEventEstimate = coarseEventEstimator.estimate(
             current = context,
             samplingDecision = currentSamplingDecision,
@@ -721,6 +790,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             currentMotionSnapshot.motionEnergy
         )
         updateDecisionUi()
+        if (previousIntervalMs != currentSamplingDecision.intervalMs) scheduleNextCapture()
     }
 
     private fun updateDecisionUi() {
@@ -735,6 +805,29 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             yesNo(currentEventEstimate.possibleNewEvent),
             samplingModeLabel(currentSamplingDecision)
         )
+        binding.samplingStatusValue.text = getString(
+            R.string.sampling_status_value,
+            samplingModeLabel(currentSamplingDecision),
+            currentSamplingDecision.reasons.joinToString(", ") { reason ->
+                samplingReasonLabel(reason)
+            }
+        )
+    }
+
+    private fun samplingReasonLabel(reason: String): String {
+        val resourceId = when (reason) {
+            "place_changed" -> R.string.sampling_reason_place
+            "state_changed" -> R.string.sampling_reason_motion
+            "location_shifted" -> R.string.sampling_reason_location
+            "boost_window_active" -> R.string.sampling_reason_boost
+            "boost_cooldown" -> R.string.sampling_reason_cooldown
+            "power_save" -> R.string.sampling_reason_power_save
+            "low_battery" -> R.string.sampling_reason_battery
+            "thermal_warm" -> R.string.sampling_reason_warm
+            "thermal_hot" -> R.string.sampling_reason_hot
+            else -> R.string.sampling_reason_stable
+        }
+        return getString(resourceId)
     }
 
     private fun eventTypeLabel(eventType: CoarseEventType): String {
@@ -769,45 +862,49 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun startCameraPreview() {
+        if (!isForeground || cameraStarting || imageCapture != null) return
+        cameraStarting = true
+        val generation = ++cameraRequestGeneration
         binding.cameraStatusText.text = getString(R.string.camera_preview_starting)
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-            val preview = androidx.camera.core.Preview.Builder().build().also {
-                it.setSurfaceProvider(binding.cameraPreview.surfaceProvider)
-            }
-            imageCapture = ImageCapture.Builder().build()
-
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                this,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                imageCapture
-            )
-            binding.cameraStatusText.text = getString(R.string.camera_ready)
-            if (autoCaptureEnabled) {
-                requestImmediateCapture()
+            if (!isForeground || generation != cameraRequestGeneration) return@addListener
+            cameraStarting = false
+            runCatching {
+                val cameraProvider = cameraProviderFuture.get()
+                val preview = androidx.camera.core.Preview.Builder().build().also {
+                    it.setSurfaceProvider(binding.cameraPreview.surfaceProvider)
+                }
+                val capture = ImageCapture.Builder().build()
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    this,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    preview,
+                    capture
+                )
+                imageCapture = capture
+                binding.cameraStatusText.text = getString(R.string.camera_ready)
+                scheduleNextCapture()
+            }.onFailure { error ->
+                imageCapture = null
+                setAutoCaptureEnabled(false)
+                binding.cameraStatusText.text = getString(
+                    R.string.camera_capture_failed_with_reason,
+                    error.message ?: error.javaClass.simpleName
+                )
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun requestImmediateCapture() {
-        mainHandler.removeCallbacks(captureRunnable)
-        mainHandler.postDelayed({
-            if (!autoCaptureEnabled) {
-                return@postDelayed
-            }
-            captureCurrentFrame()
-        }, 300L)
-    }
-
     private fun scheduleNextCapture() {
-        if (!autoCaptureEnabled) {
-            return
-        }
         mainHandler.removeCallbacks(captureRunnable)
-        mainHandler.postDelayed(captureRunnable, currentSamplingDecision.intervalMs)
+        if (!autoCaptureEnabled || !isForeground || imageCapture == null) return
+        val delayMs = captureCadence.nextDelayMs(
+            SystemClock.elapsedRealtime(),
+            currentSamplingDecision.intervalMs
+        ) ?: return
+        mainHandler.postDelayed(captureRunnable, delayMs)
     }
 
     private fun stopAutoCaptureLoop() {
@@ -815,39 +912,98 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun captureCurrentFrame() {
-        binding.cameraStatusText.text = getString(R.string.camera_capture_requested)
-        val imageCapture = imageCapture ?: run {
-            binding.cameraStatusText.text = getString(R.string.camera_not_ready)
+        if (!autoCaptureEnabled || !isForeground) return
+        // Resource limits may have changed since this capture was scheduled.
+        recalculateLifeloggingState()
+        val delayMs = captureCadence.nextDelayMs(
+            SystemClock.elapsedRealtime(),
+            currentSamplingDecision.intervalMs
+        ) ?: return
+        if (delayMs > 0L) {
             scheduleNextCapture()
             return
         }
-        val outputFile = File(
-            snapshotQueueStore.imagesDir(),
-            "photo_${System.currentTimeMillis()}.jpg"
+        val capture = imageCapture ?: return
+        if (!captureCadence.onCaptureStarted(SystemClock.elapsedRealtime())) return
+        mainHandler.removeCallbacks(captureRunnable)
+        binding.cameraStatusText.text = getString(R.string.camera_capture_requested)
+        // Freeze metadata before asynchronous capture; later sensor updates belong to the next image.
+        val captureContext = currentContextSnapshot()
+        val captureDecision = currentSamplingDecision.copy(reasons = currentSamplingDecision.reasons.toList())
+        val captureEvent = coarseEventEstimator.estimate(captureContext, captureDecision, hasFreshPhoto = true)
+        val timestampMs = System.currentTimeMillis()
+        val outputFile = File(snapshotQueueStore.imagesDir(), "photo_${UUID.randomUUID()}.jpg")
+        val snapshot = LifelogSnapshot(
+            id = UUID.randomUUID().toString(),
+            timestampMs = timestampMs,
+            placeName = captureContext.placeName,
+            latitude = captureContext.latitude,
+            longitude = captureContext.longitude,
+            altitude = latestLocation?.takeIf {
+                captureContext.latitude != null && it.hasAltitude()
+            }?.altitude,
+            motion = captureContext.motion,
+            samplingDecision = captureDecision,
+            eventEstimate = captureEvent,
+            imageFileName = outputFile.name
         )
         val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
-        imageCapture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    latestPhotoFile = outputFile
+        val callback = object : ImageCapture.OnImageSavedCallback {
+            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                captureCadence.onCaptureFinished(SystemClock.elapsedRealtime(), success = true)
+                latestPhotoFile = outputFile
+                hasFreshPhoto = true
+                if (isForeground) {
                     showPhotoPreview(outputFile)
-                    hasFreshPhoto = true
                     recalculateLifeloggingState()
-                    enqueueSnapshotIfNeeded()
                     binding.cameraStatusText.text = getString(R.string.camera_capture_saved)
-                    scheduleNextCapture()
                 }
+                enqueueSnapshotIfNeeded(snapshot, outputFile)
+                scheduleNextCapture()
+            }
 
-                override fun onError(exception: ImageCaptureException) {
+            override fun onError(exception: ImageCaptureException) {
+                captureCadence.onCaptureFinished(SystemClock.elapsedRealtime(), success = false)
+                outputFile.delete()
+                if (isForeground) {
                     binding.cameraStatusText.text = getString(
                         R.string.camera_capture_failed_with_reason,
                         exception.message ?: exception.imageCaptureError.toString()
                     )
-                    scheduleNextCapture()
                 }
+                scheduleNextCapture()
             }
+        }
+        try {
+            capture.takePicture(outputOptions, ContextCompat.getMainExecutor(this), callback)
+        } catch (error: RuntimeException) {
+            captureCadence.onCaptureFinished(SystemClock.elapsedRealtime(), success = false)
+            outputFile.delete()
+            binding.cameraStatusText.text = getString(
+                R.string.camera_capture_failed_with_reason,
+                error.message ?: error.javaClass.simpleName
+            )
+            scheduleNextCapture()
+        }
+    }
+
+    private fun freshLocation(nowMs: Long): Location? = latestLocation?.takeIf {
+        nowMs - it.elapsedRealtimeNanos / 1_000_000L in 0..samplingConfig.maxLocationAgeMs
+    }
+
+    private fun currentContextSnapshot(nowMs: Long = SystemClock.elapsedRealtime()): ContextSnapshot {
+        val location = freshLocation(nowMs)
+        val placeTimestamp = latestPlaceElapsedRealtimeMs
+        return ContextSnapshot(
+            placeName = latestPlaceName.takeIf {
+                location != null && placeTimestamp != null && nowMs - placeTimestamp in 0..samplingConfig.maxPlaceAgeMs
+            },
+            latitude = location?.latitude,
+            longitude = location?.longitude,
+            motion = currentMotionSnapshot,
+            locationAccuracyMeters = location?.takeIf { it.hasAccuracy() }?.accuracy,
+            locationElapsedRealtimeMs = location?.elapsedRealtimeNanos?.div(1_000_000L),
+            placeElapsedRealtimeMs = placeTimestamp
         )
     }
 
@@ -902,22 +1058,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         return "${photoFile.name} ($formattedTime)"
     }
 
-    private fun enqueueSnapshotIfNeeded() {
-        val photoFile = latestPhotoFile ?: return
-        val snapshot = LifelogSnapshot(
-            id = UUID.randomUUID().toString(),
-            timestampMs = System.currentTimeMillis(),
-            placeName = latestPlaceName,
-            latitude = latestLatitude,
-            longitude = latestLongitude,
-            altitude = latestAltitude,
-            motion = currentMotionSnapshot,
-            samplingDecision = currentSamplingDecision,
-            eventEstimate = currentEventEstimate,
-            imageFileName = photoFile.name
-        )
+    private fun enqueueSnapshotIfNeeded(snapshot: LifelogSnapshot, photoFile: File) {
         exportSnapshotToPublicStorage(snapshot, photoFile)
-        if (!currentEventEstimate.worthUploading) {
+        if (!snapshot.eventEstimate.worthUploading) {
             return
         }
 

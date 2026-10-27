@@ -1,0 +1,293 @@
+Index: local.properties
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>## This file must *NOT* be checked into Version Control Systems,\r\n# as it contains information specific to your local configuration.\r\n#\r\n# Location of the SDK. This is only used by Gradle.\r\n# For customization when using a Version Control System, please read the\r\n# header note.\r\n#Thu Apr 02 02:36:24 CST 2026\r\nsdk.dir=D\\:\\\\Android Studio SDK\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>ISO-8859-1
+===================================================================
+diff --git a/local.properties b/local.properties
+--- a/local.properties	(revision c1852713f833c3361409c307eb36ff49425c6800)
++++ b/local.properties	(date 1775153452412)
+@@ -6,3 +6,4 @@
+ # header note.
+ #Thu Apr 02 02:36:24 CST 2026
+ sdk.dir=D\:\\Android Studio SDK
++amap.api.key=cc0f3eccf7e698a5bce8f107e00fb08e
+Index: .gitignore
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Project exclude paths\r\n/.gradle/\r\n/app/build/\r\n/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.gitignore b/.gitignore
+--- a/.gitignore	(revision c1852713f833c3361409c307eb36ff49425c6800)
++++ b/.gitignore	(date 1775153452406)
+@@ -1,4 +1,5 @@
+ # Project exclude paths
+ /.gradle/
+ /app/build/
+-/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/
+\ No newline at end of file
++/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/
++/local.properties
+Index: app/build.gradle.kts
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>plugins {\r\n    id(\"com.android.application\")\r\n    id(\"org.jetbrains.kotlin.android\")\r\n}\r\n\r\nandroid {\r\n    namespace = \"com.example.sensorcollector\"\r\n    compileSdk = 34\r\n\r\n    defaultConfig {\r\n        applicationId = \"com.example.sensorcollector\"\r\n        minSdk = 26\r\n        targetSdk = 34\r\n        versionCode = 1\r\n        versionName = \"1.0\"\r\n\r\n        testInstrumentationRunner = \"androidx.test.runner.AndroidJUnitRunner\"\r\n    }\r\n\r\n    buildTypes {\r\n        release {\r\n            isMinifyEnabled = false\r\n            proguardFiles(\r\n                getDefaultProguardFile(\"proguard-android-optimize.txt\"),\r\n                \"proguard-rules.pro\"\r\n            )\r\n        }\r\n    }\r\n\r\n    compileOptions {\r\n        sourceCompatibility = JavaVersion.VERSION_17\r\n        targetCompatibility = JavaVersion.VERSION_17\r\n    }\r\n\r\n    kotlinOptions {\r\n        jvmTarget = \"17\"\r\n    }\r\n\r\n    buildFeatures {\r\n        viewBinding = true\r\n    }\r\n}\r\n\r\ndependencies {\r\n    implementation(\"androidx.core:core-ktx:1.13.1\")\r\n    implementation(\"androidx.appcompat:appcompat:1.7.0\")\r\n    implementation(\"com.google.android.material:material:1.12.0\")\r\n    implementation(\"androidx.constraintlayout:constraintlayout:2.1.4\")\r\n    implementation(\"androidx.lifecycle:lifecycle-runtime-ktx:2.8.4\")\r\n    implementation(\"androidx.activity:activity-ktx:1.9.1\")\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+--- a/app/build.gradle.kts	(revision c1852713f833c3361409c307eb36ff49425c6800)
++++ b/app/build.gradle.kts	(date 1775153452407)
+@@ -3,6 +3,8 @@
+     id("org.jetbrains.kotlin.android")
+ }
+ 
++val amapApiKey = (project.findProperty("amap.api.key") as String?) ?: ""
++
+ android {
+     namespace = "com.example.sensorcollector"
+     compileSdk = 34
+@@ -15,6 +17,7 @@
+         versionName = "1.0"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
++        buildConfigField("String", "AMAP_API_KEY", "\"$amapApiKey\"")
+     }
+ 
+     buildTypes {
+@@ -37,6 +40,7 @@
+     }
+ 
+     buildFeatures {
++        buildConfig = true
+         viewBinding = true
+     }
+ }
+Index: app/src/main/java/com/example/sensorcollector/MainActivity.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package com.example.sensorcollector\r\n\r\nimport android.Manifest\r\nimport android.content.Intent\r\nimport android.content.Context\r\nimport android.content.pm.PackageManager\r\nimport android.hardware.Sensor\r\nimport android.hardware.SensorEvent\r\nimport android.hardware.SensorEventListener\r\nimport android.hardware.SensorManager\r\nimport android.location.Geocoder\r\nimport android.location.Location\r\nimport android.location.LocationListener\r\nimport android.location.LocationManager\r\nimport android.net.Uri\r\nimport android.os.Build\r\nimport android.os.Bundle\r\nimport android.os.Looper\r\nimport android.provider.Settings\r\nimport androidx.core.app.ActivityCompat\r\nimport androidx.activity.result.contract.ActivityResultContracts\r\nimport androidx.appcompat.app.AppCompatActivity\r\nimport androidx.core.content.ContextCompat\r\nimport com.example.sensorcollector.databinding.ActivityMainBinding\r\nimport org.json.JSONObject\r\nimport java.io.BufferedReader\r\nimport java.io.IOException\r\nimport java.io.InputStreamReader\r\nimport java.net.HttpURLConnection\r\nimport java.net.URL\r\nimport java.net.URLEncoder\r\nimport java.util.Locale\r\nimport kotlin.concurrent.thread\r\n\r\nclass MainActivity : AppCompatActivity(), SensorEventListener, LocationListener {\r\n\r\n    companion object {\r\n        private const val AMAP_API_KEY = \"cc0f3eccf7e698a5bce8f107e00fb08e\"\r\n        private const val AMAP_BASE_URL = \"https://restapi.amap.com/v3/geocode/regeo\"\r\n        private const val PREFS_NAME = \"sensorcollector_prefs\"\r\n        private const val KEY_LOCATION_PERMISSION_REQUESTED = \"location_permission_requested\"\r\n    }\r\n\r\n    private lateinit var binding: ActivityMainBinding\r\n    private lateinit var sensorManager: SensorManager\r\n    private lateinit var locationManager: LocationManager\r\n    private lateinit var geocoder: Geocoder\r\n    private var lastResolvedLocationKey: String? = null\r\n    private var placeLookupToken = 0L\r\n\r\n    private val permissionLauncher =\r\n        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->\r\n            val fineGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true\r\n            val coarseGranted = result[Manifest.permission.ACCESS_COARSE_LOCATION] == true\r\n            if (fineGranted || coarseGranted) {\r\n                binding.refreshButton.setText(R.string.request_permission)\r\n                startLocationUpdates()\r\n            } else {\r\n                updatePermissionUiAfterDenial()\r\n            }\r\n        }\r\n\r\n    override fun onCreate(savedInstanceState: Bundle?) {\r\n        super.onCreate(savedInstanceState)\r\n        binding = ActivityMainBinding.inflate(layoutInflater)\r\n        setContentView(binding.root)\r\n\r\n        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager\r\n        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager\r\n        geocoder = Geocoder(this, Locale.getDefault())\r\n\r\n        setupSensorAvailability()\r\n        binding.refreshButton.setOnClickListener {\r\n            handleLocationButtonClick()\r\n        }\r\n    }\r\n\r\n    override fun onResume() {\r\n        super.onResume()\r\n        registerSensor(Sensor.TYPE_ACCELEROMETER)\r\n        registerSensor(Sensor.TYPE_GYROSCOPE)\r\n        registerSensor(Sensor.TYPE_MAGNETIC_FIELD)\r\n        syncLocationUi()\r\n    }\r\n\r\n    override fun onPause() {\r\n        super.onPause()\r\n        sensorManager.unregisterListener(this)\r\n        locationManager.removeUpdates(this)\r\n    }\r\n\r\n    private fun setupSensorAvailability() {\r\n        binding.accelerometerStatus.text = buildAvailabilityText(Sensor.TYPE_ACCELEROMETER)\r\n        binding.gyroscopeStatus.text = buildAvailabilityText(Sensor.TYPE_GYROSCOPE)\r\n        binding.magnetometerStatus.text = buildAvailabilityText(Sensor.TYPE_MAGNETIC_FIELD)\r\n        binding.gpsStatus.text = if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {\r\n            getString(R.string.sensor_available)\r\n        } else {\r\n            getString(R.string.sensor_unavailable)\r\n        }\r\n    }\r\n\r\n    private fun buildAvailabilityText(sensorType: Int): String {\r\n        return if (sensorManager.getDefaultSensor(sensorType) != null) {\r\n            getString(R.string.sensor_available)\r\n        } else {\r\n            getString(R.string.sensor_unavailable)\r\n        }\r\n    }\r\n\r\n    private fun registerSensor(sensorType: Int) {\r\n        sensorManager.getDefaultSensor(sensorType)?.also { sensor ->\r\n            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)\r\n        }\r\n    }\r\n\r\n    private fun requestLocationPermissionIfNeeded() {\r\n        val fineGranted = ContextCompat.checkSelfPermission(\r\n            this,\r\n            Manifest.permission.ACCESS_FINE_LOCATION\r\n        ) == PackageManager.PERMISSION_GRANTED\r\n        val coarseGranted = ContextCompat.checkSelfPermission(\r\n            this,\r\n            Manifest.permission.ACCESS_COARSE_LOCATION\r\n        ) == PackageManager.PERMISSION_GRANTED\r\n\r\n        if (fineGranted || coarseGranted) {\r\n            binding.locationPermissionStatus.text = getString(R.string.location_permission_granted)\r\n            binding.refreshButton.setText(R.string.request_permission)\r\n            startLocationUpdates()\r\n            return\r\n        }\r\n\r\n        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)\r\n            .edit()\r\n            .putBoolean(KEY_LOCATION_PERMISSION_REQUESTED, true)\r\n            .apply()\r\n\r\n        binding.locationPermissionStatus.text = getString(R.string.location_permission_requesting)\r\n        permissionLauncher.launch(\r\n            arrayOf(\r\n                Manifest.permission.ACCESS_FINE_LOCATION,\r\n                Manifest.permission.ACCESS_COARSE_LOCATION\r\n            )\r\n        )\r\n    }\r\n\r\n    private fun handleLocationButtonClick() {\r\n        if (hasLocationPermission()) {\r\n            if (!isAnyLocationProviderEnabled()) {\r\n                openLocationSettings()\r\n                return\r\n            }\r\n            startLocationUpdates()\r\n            return\r\n        }\r\n\r\n        if (isPermissionPermanentlyDenied()) {\r\n            openAppSettings()\r\n            return\r\n        }\r\n\r\n        requestLocationPermissionIfNeeded()\r\n    }\r\n\r\n    private fun syncLocationUi() {\r\n        setupSensorAvailability()\r\n        if (hasLocationPermission()) {\r\n            if (!isAnyLocationProviderEnabled()) {\r\n                binding.locationPermissionStatus.text =\r\n                    getString(R.string.location_services_disabled)\r\n                binding.refreshButton.setText(R.string.open_location_settings)\r\n                return\r\n            }\r\n            binding.locationPermissionStatus.text = getString(R.string.location_permission_granted)\r\n            binding.refreshButton.setText(R.string.request_permission)\r\n            startLocationUpdates()\r\n            return\r\n        }\r\n\r\n        if (isPermissionPermanentlyDenied()) {\r\n            binding.locationPermissionStatus.text =\r\n                getString(R.string.location_permission_open_settings)\r\n            binding.refreshButton.setText(R.string.open_app_settings)\r\n            return\r\n        }\r\n\r\n        binding.locationPermissionStatus.text = getString(R.string.location_permission_waiting)\r\n        binding.refreshButton.setText(R.string.request_permission)\r\n    }\r\n\r\n    private fun updatePermissionUiAfterDenial() {\r\n        if (isPermissionPermanentlyDenied()) {\r\n            binding.locationPermissionStatus.text =\r\n                getString(R.string.location_permission_open_settings)\r\n            binding.refreshButton.setText(R.string.open_app_settings)\r\n        } else {\r\n            binding.locationPermissionStatus.text = getString(R.string.location_permission_denied)\r\n            binding.refreshButton.setText(R.string.request_permission)\r\n        }\r\n    }\r\n\r\n    private fun hasLocationPermission(): Boolean {\r\n        val fineGranted = ContextCompat.checkSelfPermission(\r\n            this,\r\n            Manifest.permission.ACCESS_FINE_LOCATION\r\n        ) == PackageManager.PERMISSION_GRANTED\r\n        val coarseGranted = ContextCompat.checkSelfPermission(\r\n            this,\r\n            Manifest.permission.ACCESS_COARSE_LOCATION\r\n        ) == PackageManager.PERMISSION_GRANTED\r\n\r\n        return fineGranted || coarseGranted\r\n    }\r\n\r\n    private fun isPermissionPermanentlyDenied(): Boolean {\r\n        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)\r\n        val requestedBefore = prefs.getBoolean(KEY_LOCATION_PERMISSION_REQUESTED, false)\r\n        if (!requestedBefore || hasLocationPermission()) {\r\n            return false\r\n        }\r\n\r\n        val fineRationale = ActivityCompat.shouldShowRequestPermissionRationale(\r\n            this,\r\n            Manifest.permission.ACCESS_FINE_LOCATION\r\n        )\r\n        val coarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(\r\n            this,\r\n            Manifest.permission.ACCESS_COARSE_LOCATION\r\n        )\r\n\r\n        return !fineRationale && !coarseRationale\r\n    }\r\n\r\n    private fun openAppSettings() {\r\n        val intent = Intent(\r\n            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,\r\n            Uri.fromParts(\"package\", packageName, null)\r\n        )\r\n        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)\r\n        startActivity(intent)\r\n    }\r\n\r\n    private fun openLocationSettings() {\r\n        val intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)\r\n        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)\r\n        startActivity(intent)\r\n    }\r\n\r\n    private fun isAnyLocationProviderEnabled(): Boolean {\r\n        return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||\r\n            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ||\r\n            locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) ||\r\n            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&\r\n                locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER))\r\n    }\r\n\r\n    private fun startLocationUpdates() {\r\n        if (!hasLocationPermission()) {\r\n            return\r\n        }\r\n\r\n        if (!isAnyLocationProviderEnabled()) {\r\n            binding.locationPermissionStatus.text = getString(R.string.location_services_disabled)\r\n            binding.refreshButton.setText(R.string.open_location_settings)\r\n            return\r\n        }\r\n\r\n        val fineGranted = ContextCompat.checkSelfPermission(\r\n            this,\r\n            Manifest.permission.ACCESS_FINE_LOCATION\r\n        ) == PackageManager.PERMISSION_GRANTED\r\n        val coarseGranted = ContextCompat.checkSelfPermission(\r\n            this,\r\n            Manifest.permission.ACCESS_COARSE_LOCATION\r\n        ) == PackageManager.PERMISSION_GRANTED\r\n\r\n        val providers = buildList {\r\n            if (fineGranted && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {\r\n                add(LocationManager.GPS_PROVIDER)\r\n            }\r\n            if (coarseGranted && locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {\r\n                add(LocationManager.NETWORK_PROVIDER)\r\n            }\r\n            if (coarseGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&\r\n                locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)\r\n            ) {\r\n                add(LocationManager.FUSED_PROVIDER)\r\n            }\r\n            if (coarseGranted && locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {\r\n                add(LocationManager.PASSIVE_PROVIDER)\r\n            }\r\n        }.distinct()\r\n\r\n        if (providers.isEmpty()) {\r\n            binding.locationPermissionStatus.text = getString(R.string.location_provider_disabled)\r\n            binding.refreshButton.setText(R.string.open_location_settings)\r\n            return\r\n        }\r\n\r\n        binding.refreshButton.setText(R.string.request_permission)\r\n        binding.locationPermissionStatus.text = getString(R.string.location_waiting_for_fix)\r\n\r\n        locationManager.removeUpdates(this)\r\n        providers.forEach { provider ->\r\n            locationManager.requestLocationUpdates(\r\n                provider,\r\n                1000L,\r\n                0f,\r\n                this,\r\n                Looper.getMainLooper()\r\n            )\r\n        }\r\n\r\n        providers\r\n            .mapNotNull { provider -> locationManager.getLastKnownLocation(provider) }\r\n            .maxByOrNull { it.time }\r\n            ?.let(::renderLocation)\r\n    }\r\n\r\n    override fun onSensorChanged(event: SensorEvent) {\r\n        when (event.sensor.type) {\r\n            Sensor.TYPE_ACCELEROMETER -> {\r\n                binding.accelerometerValue.text = formatVector(event.values)\r\n            }\r\n            Sensor.TYPE_GYROSCOPE -> {\r\n                binding.gyroscopeValue.text = formatVector(event.values)\r\n            }\r\n            Sensor.TYPE_MAGNETIC_FIELD -> {\r\n                binding.magnetometerValue.text = formatVector(event.values)\r\n            }\r\n        }\r\n    }\r\n\r\n    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit\r\n\r\n    override fun onLocationChanged(location: Location) {\r\n        renderLocation(location)\r\n    }\r\n\r\n    private fun renderLocation(location: Location) {\r\n        binding.locationPermissionStatus.text = getString(R.string.location_listening)\r\n        binding.latitudeValue.text = formatDouble(location.latitude, 6)\r\n        binding.longitudeValue.text = formatDouble(location.longitude, 6)\r\n        binding.altitudeValue.text = if (location.hasAltitude()) {\r\n            getString(R.string.meter_value, formatDouble(location.altitude, 2))\r\n        } else {\r\n            getString(R.string.value_unavailable)\r\n        }\r\n        binding.speedValue.text = if (location.hasSpeed()) {\r\n            getString(R.string.speed_value, formatDouble(location.speed.toDouble(), 2))\r\n        } else {\r\n            getString(R.string.value_unavailable)\r\n        }\r\n        binding.bearingValue.text = if (location.hasBearing()) {\r\n            getString(R.string.degree_value, formatDouble(location.bearing.toDouble(), 1))\r\n        } else {\r\n            getString(R.string.value_unavailable)\r\n        }\r\n        binding.accuracyValue.text = if (location.hasAccuracy()) {\r\n            getString(R.string.meter_value, formatDouble(location.accuracy.toDouble(), 2))\r\n        } else {\r\n            getString(R.string.value_unavailable)\r\n        }\r\n        binding.providerValue.text = location.provider ?: getString(R.string.value_unavailable)\r\n        resolvePlaceName(location)\r\n    }\r\n\r\n    private fun resolvePlaceName(location: Location) {\r\n        val locationKey = \"${formatDouble(location.latitude, 4)},${formatDouble(location.longitude, 4)}\"\r\n        if (lastResolvedLocationKey == locationKey) {\r\n            return\r\n        }\r\n\r\n        lastResolvedLocationKey = locationKey\r\n        val lookupToken = ++placeLookupToken\r\n        binding.placeNameValue.text = getString(R.string.place_name_loading)\r\n        thread {\r\n            val amapName = fetchAmapPlaceName(location)\r\n            if (amapName != null) {\r\n                runOnUiThread {\r\n                    if (lookupToken == placeLookupToken) {\r\n                        binding.placeNameValue.text = amapName\r\n                    }\r\n                }\r\n                return@thread\r\n            }\r\n\r\n            val localName = resolvePlaceNameWithGeocoder(location)\r\n            runOnUiThread {\r\n                if (lookupToken == placeLookupToken) {\r\n                    binding.placeNameValue.text = localName\r\n                }\r\n            }\r\n        }\r\n    }\r\n\r\n    private fun fetchAmapPlaceName(location: Location): String? {\r\n        return try {\r\n            val locationParam = URLEncoder.encode(\r\n                \"${location.longitude},${location.latitude}\",\r\n                Charsets.UTF_8.name()\r\n            )\r\n            val extensions = URLEncoder.encode(\"all\", Charsets.UTF_8.name())\r\n            val url = URL(\r\n                \"$AMAP_BASE_URL?key=$AMAP_API_KEY&location=$locationParam&extensions=$extensions&radius=100\"\r\n            )\r\n            val connection = (url.openConnection() as HttpURLConnection).apply {\r\n                requestMethod = \"GET\"\r\n                connectTimeout = 5000\r\n                readTimeout = 5000\r\n            }\r\n\r\n            connection.inputStream.bufferedReader().use(BufferedReader::readText)\r\n                .let(::parseAmapPlaceName)\r\n        } catch (_: IOException) {\r\n            null\r\n        } catch (_: IllegalArgumentException) {\r\n            null\r\n        }\r\n    }\r\n\r\n    private fun parseAmapPlaceName(response: String): String? {\r\n        val json = JSONObject(response)\r\n        if (json.optString(\"status\") != \"1\") {\r\n            return null\r\n        }\r\n\r\n        val regeocode = json.optJSONObject(\"regeocode\") ?: return null\r\n        val addressComponent = regeocode.optJSONObject(\"addressComponent\")\r\n        val aois = regeocode.optJSONArray(\"aois\")\r\n        val pois = regeocode.optJSONArray(\"pois\")\r\n\r\n        val parts = linkedSetOf<String>()\r\n\r\n        aois?.optJSONObject(0)?.optString(\"name\")\r\n            ?.takeIf { it.isNotBlank() }\r\n            ?.let(parts::add)\r\n        pois?.optJSONObject(0)?.optString(\"name\")\r\n            ?.takeIf { it.isNotBlank() }\r\n            ?.let(parts::add)\r\n        addressComponent?.optString(\"building\")\r\n            ?.takeIf { it.isNotBlank() && it != \"[]\" }\r\n            ?.let(parts::add)\r\n        addressComponent?.optString(\"streetNumber\")\r\n            ?.takeIf { it.isNotBlank() && it != \"[]\" }\r\n            ?.let { raw ->\r\n                val streetJson = runCatching { JSONObject(raw) }.getOrNull()\r\n                val street = streetJson?.optString(\"street\")?.takeIf { it.isNotBlank() }\r\n                val number = streetJson?.optString(\"number\")?.takeIf { it.isNotBlank() }\r\n                listOfNotNull(street, number)\r\n                    .joinToString(\"\")\r\n                    .takeIf { it.isNotBlank() }\r\n                    ?.let(parts::add)\r\n            }\r\n        addressComponent?.optString(\"township\")\r\n            ?.takeIf { it.isNotBlank() }\r\n            ?.let(parts::add)\r\n        regeocode.optString(\"formatted_address\")\r\n            ?.takeIf { it.isNotBlank() }\r\n            ?.let(parts::add)\r\n\r\n        return parts.firstOrNull() ?: regeocode.optString(\"formatted_address\").takeIf { it.isNotBlank() }\r\n    }\r\n\r\n    private fun resolvePlaceNameWithGeocoder(location: Location): String {\r\n        if (!Geocoder.isPresent()) {\r\n            return getString(R.string.place_name_unavailable)\r\n        }\r\n\r\n        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {\r\n            return getString(R.string.place_name_unavailable)\r\n        }\r\n\r\n        @Suppress(\"DEPRECATION\")\r\n        return try {\r\n            val address = geocoder.getFromLocation(location.latitude, location.longitude, 1)\r\n                ?.firstOrNull()\r\n            address?.toDisplayName() ?: getString(R.string.place_name_unavailable)\r\n        } catch (_: IOException) {\r\n            getString(R.string.place_name_unavailable)\r\n        } catch (_: IllegalArgumentException) {\r\n            getString(R.string.place_name_unavailable)\r\n        }\r\n    }\r\n\r\n    private fun android.location.Address.toDisplayName(): String {\r\n        val primaryParts = listOfNotNull(\r\n            premises,\r\n            subThoroughfare,\r\n            thoroughfare,\r\n            featureName,\r\n            subLocality,\r\n            locality,\r\n            subAdminArea,\r\n            adminArea,\r\n            countryName\r\n        )\r\n            .map { it.trim() }\r\n            .filter { it.isNotEmpty() }\r\n            .distinct()\r\n\r\n        if (primaryParts.isNotEmpty()) {\r\n            return primaryParts.joinToString(\", \")\r\n        }\r\n\r\n        val addressLines = buildList {\r\n            for (index in 0..maxAddressLineIndex) {\r\n                getAddressLine(index)?.trim()?.takeIf { it.isNotEmpty() }?.let(::add)\r\n            }\r\n        }.distinct()\r\n\r\n        return addressLines.firstOrNull() ?: getString(R.string.place_name_unavailable)\r\n    }\r\n\r\n    private fun formatVector(values: FloatArray): String {\r\n        return getString(\r\n            R.string.vector_value,\r\n            formatDouble(values.getOrNull(0)?.toDouble() ?: 0.0, 3),\r\n            formatDouble(values.getOrNull(1)?.toDouble() ?: 0.0, 3),\r\n            formatDouble(values.getOrNull(2)?.toDouble() ?: 0.0, 3)\r\n        )\r\n    }\r\n\r\n    private fun formatDouble(value: Double, digits: Int): String {\r\n        return String.format(Locale.US, \"%.${digits}f\", value)\r\n    }\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/sensorcollector/MainActivity.kt b/app/src/main/java/com/example/sensorcollector/MainActivity.kt
+--- a/app/src/main/java/com/example/sensorcollector/MainActivity.kt	(revision c1852713f833c3361409c307eb36ff49425c6800)
++++ b/app/src/main/java/com/example/sensorcollector/MainActivity.kt	(date 1775153452409)
+@@ -35,7 +35,6 @@
+ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener {
+ 
+     companion object {
+-        private const val AMAP_API_KEY = "cc0f3eccf7e698a5bce8f107e00fb08e"
+         private const val AMAP_BASE_URL = "https://restapi.amap.com/v3/geocode/regeo"
+         private const val PREFS_NAME = "sensorcollector_prefs"
+         private const val KEY_LOCATION_PERMISSION_REQUESTED = "location_permission_requested"
+@@ -51,8 +50,7 @@
+     private val permissionLauncher =
+         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+             val fineGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
+-            val coarseGranted = result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+-            if (fineGranted || coarseGranted) {
++            if (fineGranted) {
+                 binding.refreshButton.setText(R.string.request_permission)
+                 startLocationUpdates()
+             } else {
+@@ -115,16 +113,7 @@
+     }
+ 
+     private fun requestLocationPermissionIfNeeded() {
+-        val fineGranted = ContextCompat.checkSelfPermission(
+-            this,
+-            Manifest.permission.ACCESS_FINE_LOCATION
+-        ) == PackageManager.PERMISSION_GRANTED
+-        val coarseGranted = ContextCompat.checkSelfPermission(
+-            this,
+-            Manifest.permission.ACCESS_COARSE_LOCATION
+-        ) == PackageManager.PERMISSION_GRANTED
+-
+-        if (fineGranted || coarseGranted) {
++        if (hasPreciseLocationPermission()) {
+             binding.locationPermissionStatus.text = getString(R.string.location_permission_granted)
+             binding.refreshButton.setText(R.string.request_permission)
+             startLocationUpdates()
+@@ -146,7 +135,7 @@
+     }
+ 
+     private fun handleLocationButtonClick() {
+-        if (hasLocationPermission()) {
++        if (hasPreciseLocationPermission()) {
+             if (!isAnyLocationProviderEnabled()) {
+                 openLocationSettings()
+                 return
+@@ -155,7 +144,7 @@
+             return
+         }
+ 
+-        if (isPermissionPermanentlyDenied()) {
++        if (isPrecisePermissionPermanentlyDenied()) {
+             openAppSettings()
+             return
+         }
+@@ -165,7 +154,7 @@
+ 
+     private fun syncLocationUi() {
+         setupSensorAvailability()
+-        if (hasLocationPermission()) {
++        if (hasPreciseLocationPermission()) {
+             if (!isAnyLocationProviderEnabled()) {
+                 binding.locationPermissionStatus.text =
+                     getString(R.string.location_services_disabled)
+@@ -178,9 +167,16 @@
+             return
+         }
+ 
+-        if (isPermissionPermanentlyDenied()) {
++        if (hasApproximateOnlyPermission()) {
+             binding.locationPermissionStatus.text =
+-                getString(R.string.location_permission_open_settings)
++                getString(R.string.location_permission_need_precise)
++            binding.refreshButton.setText(R.string.open_app_settings)
++            return
++        }
++
++        if (isPrecisePermissionPermanentlyDenied()) {
++            binding.locationPermissionStatus.text =
++                getString(R.string.location_permission_open_precise_settings)
+             binding.refreshButton.setText(R.string.open_app_settings)
+             return
+         }
+@@ -190,9 +186,13 @@
+     }
+ 
+     private fun updatePermissionUiAfterDenial() {
+-        if (isPermissionPermanentlyDenied()) {
++        if (hasApproximateOnlyPermission()) {
+             binding.locationPermissionStatus.text =
+-                getString(R.string.location_permission_open_settings)
++                getString(R.string.location_permission_need_precise)
++            binding.refreshButton.setText(R.string.open_app_settings)
++        } else if (isPrecisePermissionPermanentlyDenied()) {
++            binding.locationPermissionStatus.text =
++                getString(R.string.location_permission_open_precise_settings)
+             binding.refreshButton.setText(R.string.open_app_settings)
+         } else {
+             binding.locationPermissionStatus.text = getString(R.string.location_permission_denied)
+@@ -200,23 +200,26 @@
+         }
+     }
+ 
+-    private fun hasLocationPermission(): Boolean {
+-        val fineGranted = ContextCompat.checkSelfPermission(
++    private fun hasPreciseLocationPermission(): Boolean {
++        return ContextCompat.checkSelfPermission(
+             this,
+             Manifest.permission.ACCESS_FINE_LOCATION
+         ) == PackageManager.PERMISSION_GRANTED
++    }
++
++    private fun hasApproximateOnlyPermission(): Boolean {
+         val coarseGranted = ContextCompat.checkSelfPermission(
+             this,
+             Manifest.permission.ACCESS_COARSE_LOCATION
+         ) == PackageManager.PERMISSION_GRANTED
+ 
+-        return fineGranted || coarseGranted
++        return coarseGranted && !hasPreciseLocationPermission()
+     }
+ 
+-    private fun isPermissionPermanentlyDenied(): Boolean {
++    private fun isPrecisePermissionPermanentlyDenied(): Boolean {
+         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+         val requestedBefore = prefs.getBoolean(KEY_LOCATION_PERMISSION_REQUESTED, false)
+-        if (!requestedBefore || hasLocationPermission()) {
++        if (!requestedBefore || hasPreciseLocationPermission()) {
+             return false
+         }
+ 
+@@ -224,12 +227,7 @@
+             this,
+             Manifest.permission.ACCESS_FINE_LOCATION
+         )
+-        val coarseRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+-            this,
+-            Manifest.permission.ACCESS_COARSE_LOCATION
+-        )
+-
+-        return !fineRationale && !coarseRationale
++        return !fineRationale
+     }
+ 
+     private fun openAppSettings() {
+@@ -256,7 +254,7 @@
+     }
+ 
+     private fun startLocationUpdates() {
+-        if (!hasLocationPermission()) {
++        if (!hasPreciseLocationPermission()) {
+             return
+         }
+ 
+@@ -266,30 +264,15 @@
+             return
+         }
+ 
+-        val fineGranted = ContextCompat.checkSelfPermission(
+-            this,
+-            Manifest.permission.ACCESS_FINE_LOCATION
+-        ) == PackageManager.PERMISSION_GRANTED
+-        val coarseGranted = ContextCompat.checkSelfPermission(
+-            this,
+-            Manifest.permission.ACCESS_COARSE_LOCATION
+-        ) == PackageManager.PERMISSION_GRANTED
+-
+         val providers = buildList {
+-            if (fineGranted && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
++            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                 add(LocationManager.GPS_PROVIDER)
+             }
+-            if (coarseGranted && locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+-                add(LocationManager.NETWORK_PROVIDER)
+-            }
+-            if (coarseGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                 locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)
+             ) {
+                 add(LocationManager.FUSED_PROVIDER)
+             }
+-            if (coarseGranted && locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
+-                add(LocationManager.PASSIVE_PROVIDER)
+-            }
+         }.distinct()
+ 
+         if (providers.isEmpty()) {
+@@ -403,7 +386,7 @@
+             )
+             val extensions = URLEncoder.encode("all", Charsets.UTF_8.name())
+             val url = URL(
+-                "$AMAP_BASE_URL?key=$AMAP_API_KEY&location=$locationParam&extensions=$extensions&radius=100"
++                "$AMAP_BASE_URL?key=${BuildConfig.AMAP_API_KEY}&location=$locationParam&extensions=$extensions&radius=100"
+             )
+             val connection = (url.openConnection() as HttpURLConnection).apply {
+                 requestMethod = "GET"
+Index: app/src/main/res/values/strings.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<resources>\r\n    <string name=\"app_name\">Sensor Collector</string>\r\n    <string name=\"app_subtitle\">Read GPS and IMU data from the phone in real time.</string>\r\n    <string name=\"request_permission\">Request GPS Permission</string>\r\n    <string name=\"open_app_settings\">Open App Settings</string>\r\n    <string name=\"open_location_settings\">Open Location Settings</string>\r\n    <string name=\"location_permission_waiting\">Waiting for location permission.</string>\r\n    <string name=\"location_permission_requesting\">Requesting location permission...</string>\r\n    <string name=\"location_permission_granted\">Location permission granted.</string>\r\n    <string name=\"location_permission_denied\">Location permission denied.</string>\r\n    <string name=\"location_permission_open_settings\">Location permission was denied with \"Don\\'t ask again\". Open app settings and enable Location.</string>\r\n    <string name=\"location_provider_disabled\">No location provider is enabled.</string>\r\n    <string name=\"location_services_disabled\">Location services are turned off on this phone. Open system location settings and enable them.</string>\r\n    <string name=\"location_listening\">Listening for location updates.</string>\r\n    <string name=\"location_waiting_for_fix\">Waiting for a location fix. Go outdoors or enable high-accuracy location if values stay N/A.</string>\r\n    <string name=\"location_title\">GPS Data</string>\r\n    <string name=\"imu_title\">IMU Data</string>\r\n    <string name=\"place_name_label\">Place Name</string>\r\n    <string name=\"place_name_loading\">Resolving place name...</string>\r\n    <string name=\"place_name_unavailable\">Place name unavailable</string>\r\n    <string name=\"latitude_label\">Latitude</string>\r\n    <string name=\"longitude_label\">Longitude</string>\r\n    <string name=\"altitude_label\">Altitude</string>\r\n    <string name=\"speed_label\">Speed</string>\r\n    <string name=\"bearing_label\">Bearing</string>\r\n    <string name=\"accuracy_label\">Accuracy</string>\r\n    <string name=\"provider_label\">Provider</string>\r\n    <string name=\"accelerometer_label\">Accelerometer</string>\r\n    <string name=\"gyroscope_label\">Gyroscope</string>\r\n    <string name=\"magnetometer_label\">Magnetometer</string>\r\n    <string name=\"sensor_available\">Available</string>\r\n    <string name=\"sensor_unavailable\">Unavailable</string>\r\n    <string name=\"value_unavailable\">N/A</string>\r\n    <string name=\"vector_placeholder\">x=0.000, y=0.000, z=0.000</string>\r\n    <string name=\"vector_value\">x=%1$s, y=%2$s, z=%3$s</string>\r\n    <string name=\"meter_value\">%1$s m</string>\r\n    <string name=\"speed_value\">%1$s m/s</string>\r\n    <string name=\"degree_value\">%1$s°</string>\r\n</resources>\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+--- a/app/src/main/res/values/strings.xml	(revision c1852713f833c3361409c307eb36ff49425c6800)
++++ b/app/src/main/res/values/strings.xml	(date 1775153452411)
+@@ -9,7 +9,8 @@
+     <string name="location_permission_requesting">Requesting location permission...</string>
+     <string name="location_permission_granted">Location permission granted.</string>
+     <string name="location_permission_denied">Location permission denied.</string>
+-    <string name="location_permission_open_settings">Location permission was denied with "Don\'t ask again". Open app settings and enable Location.</string>
++    <string name="location_permission_need_precise">Only approximate location is enabled. Open app settings and allow precise location for GPS accuracy.</string>
++    <string name="location_permission_open_precise_settings">Precise location permission was denied with "Don\'t ask again". Open app settings and enable precise location.</string>
+     <string name="location_provider_disabled">No location provider is enabled.</string>
+     <string name="location_services_disabled">Location services are turned off on this phone. Open system location settings and enable them.</string>
+     <string name="location_listening">Listening for location updates.</string>
