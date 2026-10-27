@@ -13,20 +13,31 @@ This repository provides the sensing software used for lifelog data collection i
 - Reads IMU sensors: accelerometer, gyroscope, and magnetometer.
 - Estimates a coarse motion state on-device: `UNKNOWN`, `STATIONARY`, `WALKING`, `RUNNING`, `IN_VEHICLE`.
 - Resolves a readable place name from location when available.
-- Adapts capture interval with a simple sampling scheduler.
+- Adapts capture interval with a simple sampling scheduler using `15 s` high frequency and `60 s` low frequency.
 - Builds local lifelog snapshots and queues them for upload.
 - Keeps snapshots in a local cache and deletes expired items after 72 hours.
-- Deletes local snapshot files after a successful upload.
+- Deletes only the private queue copy after a successful upload.
+- Keeps an LSC-style public export copy on the phone for later reading and USB transfer.
 - Shows the latest cached photo in the camera page.
 
 ## Local storage
 
-The app stores temporary upload cache files inside the app-private files directory:
+The app writes data to two places.
+
+Temporary upload cache inside the app-private files directory:
 
 - `files/lifelog_queue/snapshots/`: JSON metadata for queued snapshots
 - `files/lifelog_queue/images/`: captured JPEG images
 
 These files are not normally visible in the phone's file manager because they are stored in the app sandbox. Use Android Studio `Device Explorer` or `adb shell run-as com.example.sensorcollector` to inspect them.
+
+Public LSC export that remains on the phone:
+
+- `Documents/SensorCollector/images/YYYYMM/DD/yyyyMMdd_HHmmss_000.jpg`: exported images
+- `Documents/SensorCollector/lsc22_metadata.csv`: minute-level LSC metadata
+- `Documents/SensorCollector/sensorcollector_snapshot_metadata.csv`: per-snapshot supplemental metadata
+
+The main CSV uses one row per minute and appends image names into the `ImageID` list field for repeated captures in the same minute. These public files can be read later on the phone and should also appear after connecting the phone to a computer in file-transfer mode.
 
 ## Configuration
 
@@ -74,3 +85,4 @@ Uploaded files will be saved under:
 - If `lifelog.upload.url` is empty, the app still captures and caches snapshots locally, but upload is skipped.
 - Android 9+ blocks plain HTTP by default. This project now explicitly allows cleartext traffic so uploads to a local `http://<电脑IP>:8000/upload` server work.
 - Uploaded snapshots are removed from the local cache immediately after success.
+- Uploaded snapshots are removed from the private cache immediately after success, but the public LSC export remains.

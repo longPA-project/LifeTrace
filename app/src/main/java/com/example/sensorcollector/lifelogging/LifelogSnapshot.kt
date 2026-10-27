@@ -6,6 +6,7 @@ data class LifelogSnapshot(
     val placeName: String?,
     val latitude: Double?,
     val longitude: Double?,
+    val altitude: Double?,
     val motion: MotionSnapshot,
     val samplingDecision: SamplingDecision,
     val eventEstimate: LocalEventEstimate,

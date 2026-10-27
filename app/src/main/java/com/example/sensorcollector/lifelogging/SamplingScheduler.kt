@@ -4,7 +4,7 @@ import android.location.Location
 
 class SamplingScheduler(
     private val highFrequencyIntervalMs: Long = 5_000L,
-    private val lowFrequencyIntervalMs: Long = 30_000L,
+    private val lowFrequencyIntervalMs: Long = 15_000L,
     private val placeChangeBoostMs: Long = 120_000L,
     private val stateChangeBoostMs: Long = 90_000L
 ) {

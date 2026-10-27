@@ -35,6 +35,7 @@ import com.example.sensorcollector.lifelogging.CoarseEventEstimator
 import com.example.sensorcollector.lifelogging.CoarseEventType
 import com.example.sensorcollector.lifelogging.ContextSnapshot
 import com.example.sensorcollector.lifelogging.LocalEventEstimate
+import com.example.sensorcollector.lifelogging.LscDatasetExporter
 import com.example.sensorcollector.lifelogging.MotionSnapshot
 import com.example.sensorcollector.lifelogging.MotionStateClassifier
 import com.example.sensorcollector.lifelogging.PlaceNameResolver
@@ -57,8 +58,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlin.concurrent.thread
-import kotlin.math.abs
-import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener {
 
@@ -75,6 +74,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private lateinit var locationManager: LocationManager
     private lateinit var placeNameResolver: PlaceNameResolver
     private lateinit var snapshotQueueStore: SnapshotQueueStore
+    private lateinit var lscDatasetExporter: LscDatasetExporter
     private lateinit var uploadClient: UploadClient
     private var imageCapture: ImageCapture? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -84,18 +84,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private var lastResolvedLocationKey: String? = null
     private var placeLookupToken = 0L
     private var latestSpeedMps: Float? = null
-    private var latestMotionEnergy = 0.0
-    private var lastAccelerationMagnitude = SensorManager.GRAVITY_EARTH.toDouble()
     private var currentMotionSnapshot = MotionSnapshot(null, 0.0, ActivityState.UNKNOWN)
-    private var currentSamplingDecision = SamplingDecision(SamplingMode.LOW_FREQUENCY, 30_000L, listOf("steady_context"))
+    private var currentSamplingDecision = SamplingDecision(SamplingMode.LOW_FREQUENCY, 15_000L, listOf("steady_context"))
     private var currentEventEstimate = LocalEventEstimate(CoarseEventType.UNKNOWN, 0.0, false, false, listOf("context_stable"))
     private var activePage = AppPage.CAMERA
     private var latestLatitude: Double? = null
     private var latestLongitude: Double? = null
+    private var latestAltitude: Double? = null
     private var latestPlaceName: String? = null
     private var hasFreshPhoto = false
     private var latestPhotoFile: File? = null
     private var autoCaptureEnabled = false
+    private var lastExportSummary: String? = null
     private val captureRunnable = Runnable {
         if (!autoCaptureEnabled) {
             return@Runnable
@@ -138,6 +138,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             unavailableText = getString(R.string.place_name_unavailable)
         )
         snapshotQueueStore = SnapshotQueueStore(this)
+        lscDatasetExporter = LscDatasetExporter(this)
         uploadClient = UploadClient(BuildConfig.LIFELOG_UPLOAD_URL)
 
         setupSensorAvailability()
@@ -148,6 +149,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         )
         updateDecisionUi()
         updateLatestPhotoPreview()
+        updateExportStatus()
         setupPageNavigation()
         binding.captureButton.setOnClickListener {
             toggleAutoCapture()
@@ -431,11 +433,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
                 binding.accelerometerValue.text = formatVector(event.values)
-                motionStateClassifier.updateMotionEnergy(event.values)
+                motionStateClassifier.updateAccelerometer(event.values)
                 recalculateLifeloggingState()
             }
             Sensor.TYPE_GYROSCOPE -> {
                 binding.gyroscopeValue.text = formatVector(event.values)
+                motionStateClassifier.updateGyroscope(event.values)
+                recalculateLifeloggingState()
             }
             Sensor.TYPE_MAGNETIC_FIELD -> {
                 binding.magnetometerValue.text = formatVector(event.values)
@@ -457,6 +461,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         latestSpeedMps = location.speed.takeIf { location.hasSpeed() }
         latestLatitude = location.latitude
         latestLongitude = location.longitude
+        latestAltitude = location.altitude.takeIf { location.hasAltitude() }
         binding.latitudeValue.text = formatDouble(location.latitude, 6)
         binding.longitudeValue.text = formatDouble(location.longitude, 6)
         binding.altitudeValue.text = if (location.hasAltitude()) {
@@ -560,8 +565,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             ?.takeIf { it.isNotBlank() }
         val primaryAoi = aois?.optJSONObject(0)?.optString("name")
             ?.takeIf { it.isNotBlank() }
-        val campusName = listOfNotNull(primaryPoi, primaryAoi).firstOrNull(::looksLikeCampusLevelName)
-        val buildingName = listOfNotNull(primaryPoi, building, primaryAoi).firstOrNull(::looksLikeBuildingLevelName)
+        val campusName = listOfNotNull(primaryPoi, primaryAoi).firstOrNull(::looksLikeCampusLevelNameZh)
+        val buildingName = listOfNotNull(primaryPoi, building, primaryAoi).firstOrNull(::looksLikeBuildingLevelNameZh)
         val campusWithBuilding = combineCampusAndBuilding(campusName, buildingName)
 
         campusWithBuilding?.let(parts::add)
@@ -572,10 +577,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             ?.let(parts::add)
         campusName?.let(parts::add)
         primaryPoi
-            ?.takeUnless { it == campusName || it == buildingName || looksLikeCampusLevelName(it) }
+            ?.takeUnless { it == campusName || it == buildingName || looksLikeCampusLevelNameZh(it) }
             ?.let(parts::add)
         primaryAoi
-            ?.takeUnless { it == campusName || it == buildingName || looksLikeCampusLevelName(it) }
+            ?.takeUnless { it == campusName || it == buildingName || looksLikeCampusLevelNameZh(it) }
             ?.let(parts::add)
         regeocode.optString("formatted_address")
             .takeIf { it.isNotBlank() }
@@ -605,6 +610,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             return buildingName
         }
         return "$campusName, $buildingName"
+    }
+
+    private fun looksLikeBuildingLevelNameZh(name: String): Boolean {
+        val keywords = listOf("楼", "馆", "中心", "实验室", "教室", "教学", "大厦", "广场", "公寓")
+        return keywords.any(name::contains)
+    }
+
+    private fun looksLikeCampusLevelNameZh(name: String): Boolean {
+        val keywords = listOf("大学", "学院", "校区", "学校", "园区")
+        return keywords.any(name::contains)
     }
 
     private fun resolvePlaceNameWithGeocoder(location: Location): String {
@@ -666,30 +681,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         )
     }
 
-    private fun updateMotionEnergy(values: FloatArray): Double {
-        val x = values.getOrNull(0)?.toDouble() ?: 0.0
-        val y = values.getOrNull(1)?.toDouble() ?: 0.0
-        val z = values.getOrNull(2)?.toDouble() ?: 0.0
-        val magnitude = sqrt(x * x + y * y + z * z)
-        val delta = abs(magnitude - lastAccelerationMagnitude)
-        lastAccelerationMagnitude = magnitude
-        latestMotionEnergy = latestMotionEnergy * 0.8 + delta * 0.2
-        return latestMotionEnergy
-    }
-
-    private fun classifyActivityState(): ActivityState {
-        val speed = latestSpeedMps ?: return ActivityState.UNKNOWN
-        val motionEnergy = latestMotionEnergy
-
-        return when {
-            speed >= 6.0f -> ActivityState.IN_VEHICLE
-            speed >= 2.4f -> ActivityState.RUNNING
-            speed >= 0.8f -> ActivityState.WALKING
-            motionEnergy >= 1.2 -> ActivityState.WALKING
-            else -> ActivityState.STATIONARY
-        }
-    }
-
     private fun updateCurrentStateUi(
         state: ActivityState,
         speedMps: Float?,
@@ -703,15 +694,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             ActivityState.IN_VEHICLE -> getString(R.string.activity_state_in_vehicle)
         }
 
-        binding.currentStateDetail.text = if (speedMps == null || motionEnergy == null) {
-            getString(R.string.current_state_waiting)
-        } else {
-            getString(
-                R.string.current_state_detail,
-                formatDouble(speedMps.toDouble(), 2),
-                formatDouble(motionEnergy, 2)
-            )
-        }
+        binding.currentStateDetail.text = getString(
+            R.string.current_state_detail,
+            speedMps?.let { formatDouble(it.toDouble(), 2) } ?: getString(R.string.value_unavailable),
+            motionEnergy?.let { formatDouble(it, 2) } ?: getString(R.string.value_unavailable)
+        )
     }
 
     private fun recalculateLifeloggingState() {
@@ -916,10 +903,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     private fun enqueueSnapshotIfNeeded() {
-        if (!currentEventEstimate.worthUploading) {
-            return
-        }
-
         val photoFile = latestPhotoFile ?: return
         val snapshot = LifelogSnapshot(
             id = UUID.randomUUID().toString(),
@@ -927,14 +910,54 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             placeName = latestPlaceName,
             latitude = latestLatitude,
             longitude = latestLongitude,
+            altitude = latestAltitude,
             motion = currentMotionSnapshot,
             samplingDecision = currentSamplingDecision,
             eventEstimate = currentEventEstimate,
             imageFileName = photoFile.name
         )
+        exportSnapshotToPublicStorage(snapshot, photoFile)
+        if (!currentEventEstimate.worthUploading) {
+            return
+        }
+
         snapshotQueueStore.save(snapshot)
         snapshotQueueStore.deleteExpired(SNAPSHOT_RETENTION_MS)
-        drainSnapshotQueue()
+    }
+
+    private fun exportSnapshotToPublicStorage(snapshot: LifelogSnapshot, photoFile: File) {
+        thread {
+            runCatching {
+                lscDatasetExporter.export(snapshot, photoFile)
+            }.onSuccess { result ->
+                lastExportSummary = getString(
+                    R.string.export_status_saved,
+                    result.metadataRelativePath,
+                    result.imageRelativePath,
+                    result.snapshotMetadataRelativePath
+                )
+            }.onFailure { error ->
+                lastExportSummary = getString(
+                    R.string.export_status_failed,
+                    error.message ?: error.javaClass.simpleName
+                )
+            }
+            runOnUiThread {
+                updateExportStatus()
+                drainSnapshotQueue()
+            }
+        }
+    }
+
+    private fun updateExportStatus() {
+        val locations = lscDatasetExporter.exportLocations()
+        val summary = lastExportSummary ?: getString(
+            R.string.export_status_waiting,
+            locations.datasetDirectory,
+            locations.metadataFile,
+            locations.snapshotMetadataFile
+        )
+        binding.exportStatusText.text = summary
     }
 
     private fun drainSnapshotQueue() {

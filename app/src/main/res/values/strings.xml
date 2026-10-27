@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Sensor Collector</string>
+    <string name="app_name">LifeTrace</string>
     <string name="app_subtitle">Capture a photo with state, or inspect live GPS and IMU data.</string>
     <string name="camera_page_tab">Camera</string>
     <string name="data_page_tab">Sensors</string>
@@ -24,6 +24,10 @@
     <string name="photo_preview_waiting">No cached photo yet.</string>
     <string name="photo_preview_saved">Latest cached photo: %1$s</string>
     <string name="photo_preview_missing">Latest cached photo is unavailable.</string>
+    <string name="export_status_default">LSC export is waiting for the first snapshot.</string>
+    <string name="export_status_waiting">LSC export root: %1$s | Main CSV: %2$s | Snapshot CSV: %3$s</string>
+    <string name="export_status_saved">LSC export saved. Main CSV: %1$s | Image: %2$s | Snapshot CSV: %3$s</string>
+    <string name="export_status_failed">LSC export failed: %1$s</string>
     <string name="event_estimate_waiting">Event estimate: waiting for context.</string>
     <string name="upload_decision_waiting">Upload decision: waiting for context.</string>
     <string name="upload_status_waiting">Upload status: waiting.</string>
